@@ -1,4 +1,4 @@
-# datavant:ui-implement — Claude Context
+# pixel-twin — Claude Context
 
 This repo contains a Claude Code skill that automates the frontend UI implementation loop — from Figma design to pixel-accurate, code-quality-compliant implementation.
 
@@ -8,9 +8,10 @@ This repo contains a Claude Code skill that automates the frontend UI implementa
 
 A Claude Code skill (plugin) distributed internally at Datavant. It is **not** an application — it contains:
 
-- `skills/` — Markdown skill files that Claude Code loads and executes
+- `skills/pixel-twin.md` — Main orchestrator skill
 - `scripts/` — TypeScript utilities that the skill delegates computation to (screenshot, computed styles, pixelmatch diff)
 - `docs/design-spec.md` — Full architecture specification
+- `CHANGELOG.md` — Version history (Keep a Changelog format)
 
 When in doubt about design decisions, read `docs/design-spec.md` first.
 

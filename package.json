@@ -1,7 +1,7 @@
 {
-  "name": "datavant-ui-implement",
+  "name": "pixel-twin",
   "version": "0.1.0",
-  "description": "Claude Code skill for pixel-accurate UI implementation from Figma",
+  "description": "Claude Code skill for pixel-accurate UI implementation from Figma designs",
   "private": true,
   "scripts": {
     "screenshot": "tsx scripts/screenshot.ts",

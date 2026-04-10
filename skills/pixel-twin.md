@@ -1,9 +1,9 @@
 ---
-name: ui-implement
+name: pixel-twin
 description: Pixel-accurate UI implementation from Figma. Runs an automated implement → verify → fix loop until visual and code quality both pass. Supports Build Mode (new UI from scratch) and Upgrade Mode (targeted fixes to existing UI).
 ---
 
-# datavant:ui-implement
+# pixel-twin
 
 > **Implementation status:** Skill logic is a placeholder. The architecture is fully specified in `docs/design-spec.md`. The skill will be implemented iteratively, calibrated against real runs.
 

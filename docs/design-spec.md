@@ -433,11 +433,14 @@ Hardcoded defaults (Datavant projects):
 
 ## 15. Skill Name
 
-**`datavant:ui-implement`**
+**`pixel-twin`**
 
-- `datavant:` namespace scopes it as internal
-- `ui-implement` is generic enough to cover both Build and Upgrade modes
-- Not tied to Figma specifically (leaves room for other design tool inputs in future)
+- Name reflects the goal: when the skill succeeds, the running app and the Figma mock are indistinguishable — they are pixel twins
+- Not tied to Figma specifically (works with any design tool input in future)
+- Covers both Build Mode and Upgrade Mode
+- When distributed under a company namespace: `datavant:pixel-twin`
+
+Skill invocation: `/pixel-twin <figma_url> [jira_ticket_url]`
 
 ---
 

@@ -1,10 +1,10 @@
-# datavant:ui-implement
+# pixel-twin
 
 A Claude Code skill that automates the frontend UI implementation loop — from Figma design to pixel-accurate, code-quality-compliant implementation.
 
-**Status: v0.1 — Design complete, implementation in progress**
+The name says it all: when the skill works, the running app and the Figma mock are indistinguishable side-by-side. They are pixel twins.
 
-The design spec is based on first principles and needs calibration against real runs. Thresholds, agent prompts, and scripts will be refined iteratively.
+**Status: v0.1 — Design complete, implementation in progress**
 
 ---
 
@@ -12,8 +12,8 @@ The design spec is based on first principles and needs calibration against real 
 
 Given a Figma URL (and optional Jira ticket), the skill:
 
-1. Detects whether the UI is new (Build Mode) or existing (Upgrade Mode)
-2. Implements or refines the component(s) using exact Figma Inspect values
+1. Detects whether the UI is new (**Build Mode**) or existing (**Upgrade Mode**)
+2. Implements or refines components using exact Figma Inspect values
 3. Runs Visual Review (computed styles + screenshot diff) and Code Review in parallel
 4. Iterates until both pass, surfacing checkpoints to the engineer along the way
 5. Produces a final sign-off with side-by-side comparison and changed file list
@@ -25,7 +25,7 @@ The success bar: a designer looking at the running app and the Figma mock side-b
 ## Usage
 
 ```
-/ui-implement <figma_url> [jira_ticket_url]
+/pixel-twin <figma_url> [jira_ticket_url]
 ```
 
 Or paste a Figma URL in conversation — the skill will offer to activate.
@@ -44,9 +44,11 @@ Or paste a Figma URL in conversation — the skill will offer to activate.
 ## Installation
 
 ```bash
-# Install as a Claude Code plugin (once published)
-claude plugin install datavant/datavant-ui-implement
+# Clone and register as a local Claude Code skill
+git clone https://github.com/aochengyu/pixel-twin.git
 ```
+
+Plugin distribution coming once v1.0 is stable.
 
 ---
 
@@ -54,21 +56,21 @@ claude plugin install datavant/datavant-ui-implement
 
 ```
 skills/
-  ui-implement.md          # Main orchestrator skill
-  ui-implement-review.md   # Visual + Code Review subagent skill
+  pixel-twin.md            # Main orchestrator skill
 scripts/
   screenshot.ts            # Playwright screenshot utility
   computed-styles.ts       # CSS computed styles extractor
   pixelmatch-compare.ts    # Image diff utility
 docs/
-  design-spec.md           # Full design specification
+  design-spec.md           # Full architecture specification
+CHANGELOG.md               # Version history
 ```
 
 ---
 
 ## Configuration
 
-Create `.claude/ui-implement.config.ts` in your project to override defaults:
+Create `.claude/pixel-twin.config.ts` in your project to override defaults:
 
 ```typescript
 export const config = {
@@ -81,12 +83,24 @@ export const config = {
   dev: {
     port: 3000,
     mockLoginUrl: "/login",
-    authHelper: "e2e/helpers/auth.ts"
+    authHelper: "e2e/helpers/auth.ts",
+    designSystem: "@your-org/design-system"
   }
 }
 ```
 
-Datavant-specific conventions (PHI/PII safety, `@datavant/dart`, React Router 7 patterns) are built in and do not need configuration.
+---
+
+## Roadmap
+
+See [`docs/design-spec.md`](docs/design-spec.md) for the full architecture and [`CHANGELOG.md`](CHANGELOG.md) for version history.
+
+| Version | Theme | Status |
+|---------|-------|--------|
+| v0.1 | Design complete, scaffold | Done |
+| v1.0 | First working implementation (Build + Upgrade modes) | In progress |
+| v2.0 | Interactive states, animations, form validation | Planned |
+| v3.0 | Responsive/breakpoints, Storybook, multi-design-system | Planned |
 
 ---
 
@@ -100,12 +114,4 @@ Key decisions:
 - **Screenshot** as secondary verification (structure, visual weight, icons)
 - Visual Review + Code Review run **in parallel** as stateless subagents
 - **Two modes**: Build (new UI from scratch) and Upgrade (targeted fixes to existing UI)
-- Thresholds calibrated on first real run — not defined upfront
-
----
-
-## Known limitations (v1)
-
-- Animations and micro-interactions not verified
-- Responsive/breakpoint verification not in scope
-- Exact diff thresholds TBD (calibrated on real runs)
+- **Three diff categories**: Structural (always block) / Marginal (engineer decides) / Rendering Delta (never block)
