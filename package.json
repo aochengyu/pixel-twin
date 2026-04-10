@@ -1,0 +1,21 @@
+{
+  "name": "datavant-ui-implement",
+  "version": "0.1.0",
+  "description": "Claude Code skill for pixel-accurate UI implementation from Figma",
+  "private": true,
+  "scripts": {
+    "screenshot": "tsx scripts/screenshot.ts",
+    "computed-styles": "tsx scripts/computed-styles.ts",
+    "pixelmatch": "tsx scripts/pixelmatch-compare.ts"
+  },
+  "dependencies": {
+    "pixelmatch": "^5.3.0",
+    "pngjs": "^7.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
