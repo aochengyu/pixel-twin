@@ -4,9 +4,11 @@
   "description": "Claude Code skill for pixel-accurate UI implementation from Figma designs",
   "private": true,
   "scripts": {
+    "setup": "playwright install chromium",
     "screenshot": "tsx scripts/screenshot.ts",
     "computed-styles": "tsx scripts/computed-styles.ts",
-    "pixelmatch": "tsx scripts/pixelmatch-compare.ts"
+    "pixelmatch": "tsx scripts/pixelmatch-compare.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "pixelmatch": "^5.3.0",
@@ -15,6 +17,8 @@
   "devDependencies": {
     "@playwright/test": "^1.49.0",
     "@types/node": "^22.0.0",
+    "@types/pixelmatch": "^5.2.6",
+    "@types/pngjs": "^6.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   }
