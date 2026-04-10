@@ -69,11 +69,11 @@ Then invoke: `/ui-implement <figma_url>`
 
 ## Datavant-specific knowledge baked in
 
-The skill hardcodes Datavant conventions — this is intentional. Do not generalize them into config unless there is a concrete need from another team:
+The skill's defaults are calibrated for Datavant projects — this is intentional. The design system is configurable (`designSystem` in the config); other Datavant conventions are hardcoded defaults that can be overridden as the skill matures:
 
-- Design system: `@datavant/dart`
-- PHI + PII safety rules (HIPAA compliance)
-- Codebase patterns: barrel exports, `.server.ts`, path aliases (`@client/*`, `@server/*`), React Router 7 loader/action pattern
+- Design system: configurable, defaults to `@datavant/dart` for Datavant projects (the principle — enforce correct use of whatever design system the project uses — is universal)
+- PHI + PII safety rules (HIPAA compliance — Datavant default)
+- Codebase patterns: barrel exports, `.server.ts`, path aliases (`@client/*`, `@server/*`), React Router 7 loader/action pattern (Datavant defaults)
 - MSW for fixture overrides, Playwright for screenshots and computed styles
 - Zod for validation at system boundaries
 

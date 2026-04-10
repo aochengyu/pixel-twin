@@ -12,7 +12,7 @@ Build a Claude Code skill (`datavant:ui-implement`) that automates the frontend 
 
 **Ambition level:** The skill should reach the point where it can almost fully replace an engineer for UI implementation tasks. In the near term, it dramatically boosts every Datavant engineer's productivity: small tasks like implementing a single component become nearly instant; large tasks like building a full page from scratch become a matter of oversight rather than active coding.
 
-**Company-wide benefit via `@datavant/dart`:** Every engineer who uses this skill gets the same enforcement of correct `@datavant/dart` usage — automatically, without design review cycles. This makes the skill a forcing function for design system adoption across all Datavant products.
+**Company-wide design system benefit:** Every engineer who uses this skill gets automatic enforcement of the project's configured design system — correct component usage, correct token usage, no reinvention. The skill makes design system adoption a default outcome rather than a manual review step. (`@datavant/dart` is the current default for Datavant projects; other design systems are configurable.)
 
 **Success bar:** A designer looking at the running app and the Figma mock side-by-side cannot tell which is which.
 
@@ -416,8 +416,16 @@ export const config = {
 }
 ```
 
-Hardcoded (not configurable):
-- Design system: `@datavant/dart`
+Configurable design system:
+```typescript
+dev: {
+  ...
+  designSystem: "@datavant/dart"  // default — override for other projects
+}
+```
+The skill's Code Review Agent uses this to verify that existing design system components are used where applicable and no design system logic is being reinvented inline.
+
+Hardcoded defaults (Datavant projects):
 - Safety rules: PHI + PII
 - Codebase conventions: barrel exports, `.server.ts`, path aliases, React Router 7 patterns
 
@@ -575,9 +583,9 @@ These items are out of scope for v1 but the architecture is designed to accommod
 
 ### v3 — Broader Adoption
 
-**Multi-design-system support**
-- Currently: hardcoded to `@datavant/dart`
-- v3: configurable design system — any team can specify their component library and the skill enforces it
+**Richer design system integration**
+- Currently: configurable by name (`designSystem` in config), Code Review Agent checks for reuse
+- v3: deeper integration — parse design system's component API docs at startup, give Implementation Agent concrete component usage examples rather than just a name
 
 **Figma Dev Mode annotations**
 - v3: read Figma Dev Mode annotations (if designer has added implementation notes) and incorporate into Implementation Agent context

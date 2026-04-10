@@ -90,7 +90,7 @@ npm run test
 ### Phase 2 — Semantic (Sonnet, only if Phase 1 passes)
 
 - **PHI + PII safety**: no raw logging of patient names, DOB, SSN, MRN, requester names, emails, addresses; correct use of `sanitizeRoiRequestParams()`, `sanitizeErrorMessage()`, `getRequestLogger()`
-- **`@datavant/dart` reuse**: are existing dart components used where applicable? Is any logic reinventing existing utilities in `lib/` or `services/`?
+- **Design system reuse**: are existing components from the configured design system used where applicable? Is any logic reinventing something the design system already provides? (Default design system: `@datavant/dart`)
 - **Pattern adherence**: `.server.ts` suffix, barrel exports, path aliases (`@client/*`, `@server/*`), React Router 7 loader/action, Zod validation at boundaries
 - **React correctness**: no `useEffect` for loader work, correct hook dependencies, appropriate component granularity
 
@@ -123,12 +123,13 @@ export const config = {
   dev: {
     port: 3000,
     mockLoginUrl: "/login",
-    authHelper: "e2e/helpers/auth.ts"
+    authHelper: "e2e/helpers/auth.ts",
+    designSystem: "@datavant/dart"  // override for projects using a different design system
   }
 }
 ```
 
-Hardcoded (not configurable): `@datavant/dart`, PHI + PII rules, Datavant codebase conventions.
+Design system is configurable via `designSystem` key (defaults to `@datavant/dart`). PHI + PII rules and Datavant codebase conventions are hardcoded defaults.
 
 ---
 
