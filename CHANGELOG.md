@@ -7,7 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Work toward v1.0 — see [GitHub Milestone](https://github.com/aochengyu/pixel-twin/milestone/2).
+Next: calibrate diff thresholds on first real run (#6), UX polish (#7).
+
+---
+
+## [1.0.0-alpha] - 2026-04-10
+
+First complete implementation. All four agents implemented and wired together. Needs calibration on a real run before v1.0.0 stable.
+
+### Added
+
+- **Orchestrator** (`skills/pixel-twin.md`) — full 7-step loop: config loading, dev server check, Jira context, Figma frame reading, Build/Upgrade mode detection, component loop, full-page integration pass, sign-off
+- **Implementation Agent** (`skills/agents/implementation-agent.md`) — 6-phase workflow: understand design, understand codebase, plan, write code, generate Content Density Fixture, output ReviewSpec
+- **Visual Review Agent** (`skills/agents/visual-review-agent.md`) — Track A (computed styles via Playwright, Figma value comparison, three-category classification) + Track B (screenshot diff via pixelmatch + Claude Vision)
+- **Code Review Agent** (`skills/agents/code-review-agent.md`) — Phase 1 parallel tool runs + Phase 2 semantic analysis with configurable safety/convention profiles
+- **Scripts**: `screenshot.ts`, `computed-styles.ts`, `pixelmatch-compare.ts`, shared `_args.ts`
+- `.npmrc` pointing to public npm registry (pixel-twin uses only public packages)
+- `tsconfig.json`
+
+### Architecture
+
+- Autonomous by default — only surfaces to human for low-confidence marginals or genuine stuck state
+- Stuck escalation ladder: retry → re-read Figma → different approach → Opus → human
+- Models: Haiku (routing/Phase 1), Sonnet (implementation/semantic review/visual review), Opus (escalation only)
+- Safety and convention checks are configurable profiles (`datavant-hipaa`, `basic`, `none`)
 
 ---
 
