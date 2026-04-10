@@ -24,11 +24,12 @@ Two entry points, both supported:
 
 **A. Skill invocation**
 ```
-/ui-implement <figma_url> [jira_ticket_url]
+/pixel-twin <figma_url> [jira_ticket_url]
 ```
+Invoking the skill IS confirmation — no additional prompt is shown. Implementation begins immediately.
 
 **B. Conversation**
-When a Figma URL appears in conversation, the workflow offers to activate. The engineer confirms before any implementation begins. Jira context is supplementary — the workflow runs without it.
+When a Figma URL appears in conversation, the workflow offers to activate and waits for the engineer to confirm before beginning. Jira context is supplementary — the workflow runs without it.
 
 ---
 
@@ -72,7 +73,7 @@ Model selection follows the principle: use the cheapest model that can reliably 
 |-------|-------|-----------|
 | **Orchestrator** | Haiku | Routing and state management — no deep reasoning needed |
 | **Implementation Agent** | Sonnet (default) / Opus (escalation) | Core creative work — code generation, Figma interpretation, fix synthesis. Opus used when stuck after multiple failed iterations or when the component is highly complex. |
-| **Visual Review Agent** | Haiku | Pattern matching against a structured spec — no creativity needed |
+| **Visual Review Agent** | Sonnet | Diff categorization (Structural / Marginal / Rendering Delta) requires judgment — Haiku miscategorizes edge cases. Scripts handle all computation; Sonnet handles only the categorization step. |
 | **Code Review Agent — Phase 1** | Haiku | Runs shell tools (`typecheck`, `lint`, `test`) — purely mechanical |
 | **Code Review Agent — Phase 2** | Sonnet | Semantic analysis of changed code — needs language understanding |
 
@@ -229,28 +230,23 @@ npm run test        # Vitest: no regressions in existing tests
 If any Phase 1 tool fails → immediately return failure report, skip Phase 2.
 
 ### Phase 2 — Claude semantic analysis (only if Phase 1 passes)
-Reads only the changed files. Checks:
+Reads only the changed files. Runs three configurable check categories:
 
-**PHI + PII Safety**
-- No raw logging of patient names, DOB, SSN, MRN, requester names, emails, addresses
-- Uses `getRequestLogger()` not global logger
-- Uses `sanitizeRoiRequestParams()` and `sanitizeErrorMessage()` where needed
-- No PHI/PII in URL params
+**Safety Profile** (`safetyProfile` in config — see §14)
+Generic: no sensitive data in logs, no sensitive data in URL params, no sensitive data in client-side state.
+Default (Datavant): HIPAA/PHI+PII rules — no raw logging of patient names/DOB/SSN/MRN/requester info; use project-configured sanitization utilities; no PHI/PII in URL params.
 
-**Reuse**
-- Are existing `@datavant/dart` components used where applicable?
-- Is any logic reinventing existing utilities in `lib/` or `services/`?
+**Design System Reuse**
+- Are existing components from the configured `designSystem` used where applicable?
+- Is any logic reinventing something the design system already provides?
 
-**Pattern Adherence**
-- `.server.ts` suffix for server-only code
-- Barrel exports respected
-- Path aliases used (`@client/*`, `@server/*`)
-- Loader/action pattern for React Router 7
-- PHI filters via form POST, not URL params
-- Zod validation at system boundaries
+**Convention Profile** (`conventionProfile` in config — see §14)
+A named set of codebase conventions to enforce. The agent checks changed files against this profile.
+Default (Datavant): `.server.ts` suffix for server-only code, barrel exports, path aliases (`@client/*`, `@server/*`), React Router 7 loader/action pattern, Zod validation at system boundaries.
+Other teams configure or disable this to match their stack.
 
-**React Correctness**
-- No `useEffect` for work that belongs in a loader
+**React Correctness** (always on — not project-specific)
+- No `useEffect` for work that belongs in a loader/effect boundary
 - Hook dependency arrays correct
 - Component granularity appropriate
 
@@ -295,7 +291,7 @@ interface CombinedReport {
     description: string
     severity: 'blocker' | 'marginal' | 'rendering-delta'
     file?: string
-    fix?: string        // concrete suggestion: "change p-3 → p-4"
+    fix: string         // concrete suggestion: "change p-3 → p-4" — required, never omitted
   }[]
   codeIssues: CodeReviewReport['phase2']['issues']
   hasBlockers: boolean
@@ -323,7 +319,9 @@ For each component (outside-in: layout → sections → components → details):
        No  → component done, move to next
        Yes → CombinedReport sent back to Implementation Agent, loop
   
-  Every N components → Checkpoint (see below)
+  Rendering Deltas → auto-documented, never escalated
+  High-confidence marginals → auto-resolved, logged
+  Low-confidence marginals or stuck → Checkpoint (see §11)
 
 After all components pass → Full-page Integration Pass
   · Screenshot at exact Figma frame dimensions
@@ -343,31 +341,59 @@ Final Sign-off:
 
 ## 11. Checkpoint
 
-Triggered every N components (default: 3) or when stuck (no improvement for 3 consecutive iterations).
+### Autonomous mode (default)
+
+The skill operates autonomously end-to-end. Human input is requested **only** when:
+
+1. **Low-confidence marginals exist** — the agent cannot determine with confidence whether to fix or accept (e.g., a 1px spacing difference that could be a rendering delta or a real error)
+2. **Genuinely stuck** — the agent has exhausted its own escalation ladder (see below) and still cannot pass review
+
+All other cases are handled autonomously:
+- Rendering Deltas → auto-documented, never surfaced for human judgment
+- High-confidence marginals → auto-applied with a log entry ("auto-accepted: shadow spread 3px vs 4px — rendering delta")
+- Code blockers → fixed autonomously and re-reviewed
+
+### Stuck escalation ladder
+
+Before surfacing to human, the agent works through this ladder autonomously:
 
 ```
-⚠️ Checkpoint — iteration 7 / component: RequestSidebar
+Iteration N — same blocker persists:
+  1. Re-read the Figma node directly (designs may have subtleties missed on first read)
+  2. Read related files (parent components, design tokens, existing similar implementations)
+  3. Try a different implementation approach (alternative CSS, different component variant)
+  4. Escalate model: Sonnet → Opus (one escalation per stuck cycle)
+  5. ── Only if still stuck after all of the above ──
+     Surface to human with a full diagnosis: what was tried, why it failed, what hint would help
+```
 
-Progress:
-  ✓ Components done: Header, FilterSidebar
-  ↻ In progress: RequestSidebar
+### When checkpoint does surface
 
-Current state:
-  Computed styles: ✓ all pass
-  Screenshot diff: marginal differences remain (2 items)
-  Code review: ✓ no blockers
+Only low-confidence marginals and genuinely-stuck escalations reach the engineer:
 
-Marginal differences (your call):
-  · box-shadow spread: Figma 4px / browser renders 3px
-    → Likely rendering delta — CSS and Figma shadow algorithms differ slightly
+```
+⚠️ pixel-twin — input needed / component: RequestSidebar (iteration 4)
+
+What I tried:
+  · 3 CSS approaches for box-shadow — none match Figma exactly
+  · Figma shows shadow: 0 4px 8px rgba(0,0,0,0.12), browser renders 0 3px 7px
+  · This looks like a rendering delta, but I'm not confident enough to auto-accept
+
+Low-confidence marginals:
+  · box-shadow spread: 3px vs 4px
+    → Likely rendering delta. Recommend: accept. Confidence: 70%
   · Tag padding-right: 11px vs 12px
-    → 1px off — borderline, fix or accept?
+    → Could be a real error or sub-pixel rounding. Recommend: fix. Confidence: 60%
 
 Options:
-  A. Accept current state and continue
-  B. Fix the marginal items and continue
-  C. Provide a hint or context for me to try a different approach
+  A. Accept all and continue (I'll document them in the sign-off)
+  B. Fix Tag padding, accept shadow, continue
+  C. Hint: [tell me something about the design intent]
 ```
+
+### Supervised mode (opt-in)
+
+Set `checkpointEvery: 3` in config to restore the periodic checkpoint behavior. Useful during initial calibration runs.
 
 ---
 
@@ -397,10 +423,10 @@ The workflow **only modifies files**. It never touches git.
 
 ## 14. Configuration
 
-Internal-only distribution (Datavant). Datavant-specific values are hardcoded in the skill. Only genuinely project-varying values are overridable:
+Create `.claude/pixel-twin.config.ts` in your project root to override defaults:
 
 ```typescript
-// .claude/ui-implement.config.ts (optional, project-level override)
+// .claude/pixel-twin.config.ts (optional, project-level override)
 export const config = {
   commands: {
     dev: "npm run dev",
@@ -410,24 +436,29 @@ export const config = {
   },
   dev: {
     port: 3000,
-    mockLoginUrl: "/login",
-    authHelper: "e2e/helpers/auth.ts"
+    authHelper: "e2e/helpers/auth.ts",   // path to Playwright auth setup
+    designSystem: "@datavant/dart"        // enforced in Code Review Phase 2
+  },
+  review: {
+    // safetyProfile: which sensitive-data rules to enforce in Code Review Phase 2
+    // "datavant-hipaa" = PHI/PII rules with Datavant-specific sanitization utilities
+    // "basic"         = generic: no sensitive data in logs/URLs
+    // "none"          = skip safety checks
+    safetyProfile: "datavant-hipaa",
+
+    // conventionProfile: which codebase conventions to enforce
+    // "datavant"  = barrel exports, .server.ts, @client/@server aliases, RR7 patterns
+    // "none"      = skip convention checks
+    conventionProfile: "datavant",
+
+    // checkpointEvery: periodic checkpoint even when no marginals (supervised mode)
+    // Default: undefined (autonomous — only checkpoint when genuinely needed)
+    checkpointEvery: undefined
   }
 }
 ```
 
-Configurable design system:
-```typescript
-dev: {
-  ...
-  designSystem: "@datavant/dart"  // default — override for other projects
-}
-```
-The skill's Code Review Agent uses this to verify that existing design system components are used where applicable and no design system logic is being reinvented inline.
-
-Hardcoded defaults (Datavant projects):
-- Safety rules: PHI + PII
-- Codebase conventions: barrel exports, `.server.ts`, path aliases, React Router 7 patterns
+Defaults without a config file: `safetyProfile: "datavant-hipaa"`, `conventionProfile: "datavant"` — i.e., full Datavant conventions out of the box. Other teams set their own profiles or `"none"` to disable.
 
 ---
 
@@ -523,8 +554,8 @@ Side-by-side comparison: [Figma screenshot] vs [app screenshot]
 Verified:
   ✓ 47 computed style properties across 8 components
   ✓ TypeScript, lint, and tests — all pass
-  ✓ No PHI/PII safety issues
-  ✓ All @datavant/dart components used where applicable
+  ✓ No safety issues (safetyProfile: datavant-hipaa)
+  ✓ Design system components used correctly (@datavant/dart)
 
 Rendering deltas (documented, not blocking):
   · Font anti-aliasing: expected behavior, browser-native

@@ -89,9 +89,9 @@ npm run test
 
 ### Phase 2 — Semantic (Sonnet, only if Phase 1 passes)
 
-- **PHI + PII safety**: no raw logging of patient names, DOB, SSN, MRN, requester names, emails, addresses; correct use of `sanitizeRoiRequestParams()`, `sanitizeErrorMessage()`, `getRequestLogger()`
-- **Design system reuse**: are existing components from the configured design system used where applicable? Is any logic reinventing something the design system already provides? (Default design system: `@datavant/dart`)
-- **Pattern adherence**: `.server.ts` suffix, barrel exports, path aliases (`@client/*`, `@server/*`), React Router 7 loader/action, Zod validation at boundaries
+- **Safety profile** (configurable — default `datavant-hipaa`): no sensitive data in logs/URLs; Datavant default enforces PHI/PII HIPAA rules with project-configured sanitization utilities
+- **Design system reuse**: are existing components from the configured `designSystem` used where applicable? Is any logic reinventing something it already provides?
+- **Convention profile** (configurable — default `datavant`): `.server.ts` suffix, barrel exports, path aliases, React Router 7 patterns, Zod validation at boundaries. Set `"none"` to disable for non-Datavant projects.
 - **React correctness**: no `useEffect` for loader work, correct hook dependencies, appropriate component granularity
 
 ---
@@ -102,7 +102,7 @@ npm run test
 |-------|-------|
 | Orchestrator | Haiku |
 | Implementation Agent | Sonnet (default) / Opus (stuck or complex) |
-| Visual Review Agent | Haiku |
+| Visual Review Agent | Sonnet (diff categorization requires judgment — Haiku miscategorizes edge cases) |
 | Code Review — Phase 1 | Haiku |
 | Code Review — Phase 2 | Sonnet |
 
