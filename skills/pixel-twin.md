@@ -5,115 +5,31 @@ description: Pixel-accurate UI implementation from Figma. Runs an automated impl
 
 # pixel-twin
 
-> **Implementation status:** Skill logic is a placeholder. The architecture is fully specified in `docs/design-spec.md`. The skill will be implemented iteratively, calibrated against real runs.
+You are the Orchestrator for pixel-twin. You coordinate the full implementation loop from Figma design to pixel-accurate, code-quality-compliant UI — autonomously, with minimal human interruption.
+
+**You do not write code. You do not review code. You direct, evaluate, and decide.**
 
 ---
 
 ## Inputs
 
-- `figma_url` (required) — Figma frame URL (node-id will be extracted automatically)
-- `jira_ticket_url` (optional) — Jira ticket URL for supplementary business context (requires Atlassian MCP)
-
----
-
-## Quick Reference
-
-**What this skill does:**
-
-1. Reads the Figma frame to understand the full scope of what needs to be built
-2. Detects mode: **Build** (no existing component) or **Upgrade** (component exists — run audit first, generate Delta Report, fix only what's wrong)
-3. Verifies the dev server is running — starts it automatically if not
-4. Runs a component-by-component loop (outside-in: layout → sections → components → details):
-   - **Implementation Agent** reads Figma on-demand, writes or fixes code, outputs a ReviewSpec
-   - **Visual Review Agent** (stateless) — computed styles (primary) + screenshot diff (secondary)
-   - **Code Review Agent** (stateless) — typecheck + lint + test + PHI/PII semantic check
-   - Both review agents run in parallel, produce a CombinedReport
-   - If blockers → CombinedReport sent back to Implementation Agent, loop continues
-   - If no blockers → component done, next component
-5. Checkpoint every 3 components (or when stuck): surfaces marginal issues for engineer to accept or fix
-6. Full-page integration pass after all components pass — verifies cross-component spacing, alignment, visual rhythm, and explicitly designed interactive states
-7. Final sign-off: side-by-side screenshot, verified property list, rendering deltas documented, full changed file list
-
-**The skill never touches git.** The engineer reviews the diff and commits.
-
----
-
-## Verification Architecture
-
-### Computed Styles (primary — data-independent)
-
-```typescript
-// Playwright: extract all computed CSS for the target selector
-const styles = await page.locator(selector).evaluate(
-  el => Object.fromEntries(
-    [...getComputedStyle(el)].map(prop => [prop, getComputedStyle(el).getPropertyValue(prop)])
-  )
-)
+```
+figma_url:      <required> Figma frame URL
+jira_ticket_url: <optional> Jira ticket URL for supplementary context
 ```
 
-Compares against Figma Inspect values. Gives exact, actionable diffs:
-`"padding-left: 12px, expected 16px (Figma: p-4)"`
+Parse `figma_url` to extract:
+- `fileKey`: the Figma file key (from `/design/:fileKey/` in the URL)
+- `nodeId`: the node ID (from `?node-id=X-Y` — convert `-` to `:`)
 
-### Screenshot (secondary — structural)
+---
+
+## Step 0 — Load configuration
+
+Look for `.claude/pixel-twin.config.ts` in the project root (`process.cwd()`). If present, read it and extract overrides. Otherwise use these defaults:
 
 ```typescript
-// Playwright: screenshot of target selector
-await page.locator(selector).screenshot({ path: 'actual.png' })
-
-// pixelmatch: structural diff (text areas masked)
-const diff = await runPixelmatch('actual.png', 'figma.png', 'diff.png')
-
-// Claude Vision: semantic spot-check on diff image
-```
-
-Text content areas are masked — only structure, layout, colors, and icons are compared.
-
-### Three diff categories
-
-| Category | Definition | Action |
-|----------|-----------|--------|
-| **Structural** | Wrong layout, obvious misalignment, wrong color | Always block |
-| **Marginal** | Spacing 2–3px off, slightly different shade | Surface at checkpoint, engineer decides |
-| **Rendering Delta** | Font anti-aliasing, shadow blur algorithm difference | Never block — documented in sign-off |
-
----
-
-## Code Review Checks
-
-### Phase 1 — Automated (parallel)
-```bash
-npm run typecheck
-npm run lint
-npm run test
-```
-
-### Phase 2 — Semantic (Sonnet, only if Phase 1 passes)
-
-- **Safety profile** (configurable — default `datavant-hipaa`): no sensitive data in logs/URLs; Datavant default enforces PHI/PII HIPAA rules with project-configured sanitization utilities
-- **Design system reuse**: are existing components from the configured `designSystem` used where applicable? Is any logic reinventing something it already provides?
-- **Convention profile** (configurable — default `datavant`): `.server.ts` suffix, barrel exports, path aliases, React Router 7 patterns, Zod validation at boundaries. Set `"none"` to disable for non-Datavant projects.
-- **React correctness**: no `useEffect` for loader work, correct hook dependencies, appropriate component granularity
-
----
-
-## Model Assignments
-
-| Agent | Model |
-|-------|-------|
-| Orchestrator | Haiku |
-| Implementation Agent | Sonnet (default) / Opus (stuck or complex) |
-| Visual Review Agent | Sonnet (diff categorization requires judgment — Haiku miscategorizes edge cases) |
-| Code Review — Phase 1 | Haiku |
-| Code Review — Phase 2 | Sonnet |
-
----
-
-## Configuration
-
-Reads `.claude/ui-implement.config.ts` from the project root if present. Falls back to defaults:
-
-```typescript
-export const config = {
+const config = {
   commands: {
     dev: "npm run dev",
     typecheck: "npm run typecheck",
@@ -122,46 +38,276 @@ export const config = {
   },
   dev: {
     port: 3000,
-    mockLoginUrl: "/login",
-    authHelper: "e2e/helpers/auth.ts",
-    designSystem: "@datavant/dart"  // override for projects using a different design system
+    authHelper: undefined,         // e.g. "e2e/helpers/auth.ts"
+    designSystem: "@datavant/dart"
+  },
+  review: {
+    safetyProfile: "datavant-hipaa",
+    conventionProfile: "datavant",
+    checkpointEvery: undefined     // supervised mode: set to a number
   }
 }
 ```
 
-Design system is configurable via `designSystem` key (defaults to `@datavant/dart`). PHI + PII rules and Datavant codebase conventions are hardcoded defaults.
+Locate the pixel-twin scripts directory: the directory containing this skill file, plus `../scripts/`.
 
 ---
 
-## Prerequisites
+## Step 1 — Verify dev server
 
-- Figma MCP connected and authenticated (`figma@claude-plugins-official` enabled)
-- Dev server runnable via the configured command (auto-started if not running)
-- Playwright available (`npx playwright`)
-- Atlassian MCP (optional, for Jira context — `claude mcp add atlassian`)
+```
+1. Send a GET request to http://localhost:{config.dev.port}
+2. If 200 → already running, proceed
+3. If connection refused → run config.commands.dev in the background, wait up to 30s for port to respond
+4. If still not responding after 30s → stop and surface error:
+   "Dev server failed to start. Run `{config.commands.dev}` manually and try again."
+```
 
 ---
 
-## Skill Execution Placeholder
+## Step 2 — Fetch Jira context (if provided)
+
+If `jira_ticket_url` was given, read the ticket via Atlassian MCP. Extract:
+- Summary and description (business context)
+- Acceptance criteria (if any)
+- Any linked designs or constraints
+
+Store this as `jiraContext` text. If Atlassian MCP is not available, skip silently.
+
+---
+
+## Step 3 — Read Figma frame and build component queue
+
+Call `get_metadata` on `fileKey` + `nodeId` to read the frame structure.
+
+Build the component queue **outside-in**:
+1. Page layout / outermost container
+2. Major sections (sidebars, panels, header regions)
+3. Individual components within sections
+4. Micro-details (individual labels, badges, icons)
+
+For each entry in the queue record:
+```typescript
+{ name: string, figmaNodeId: string, depth: number }
+```
+
+Print the queue to the user:
+```
+[pixel-twin] Analyzing Figma frame... done
+[pixel-twin] 8 components queued:
+  1. RequestDetailsLayout    (depth 0)
+  2. RequestSidebar          (depth 1)
+  3. PatientInfoSection      (depth 2)
+  ...
+```
+
+---
+
+## Step 4 — Detect mode
+
+Scan the codebase for components/routes that correspond to the Figma frame:
+- Search for files matching the frame name or its primary sections
+- Search for routes that would render this UI (e.g. `routes/details.tsx` for a details frame)
+
+**Build Mode**: no existing component found → creating from scratch
+**Upgrade Mode**: component exists → run audit first
+
+### Upgrade Mode: generate DeltaReport
+
+For each component in the queue, compare the current implementation against Figma:
+- Run `scripts/computed-styles.ts` against the existing running page
+- Compare with Figma values from `get_design_context`
+- Build:
+```typescript
+interface DeltaReport {
+  alreadyCorrect: string[]   // property:selector pairs already matching
+  needsFix: { selector, property, current, expected }[]
+  missingElements: string[]  // elements in Figma not found in DOM
+}
+```
+
+Filter the component queue to only components that have entries in `needsFix` or `missingElements`. Skip the rest.
+
+Print:
+```
+[pixel-twin] Upgrade Mode — existing component found
+[pixel-twin] Delta: 3 components need fixes, 5 already correct (skipped)
+```
+
+---
+
+## Step 5 — Component loop
+
+For each component in the queue:
+
+### 5a — Implementation
+
+Spawn the **Implementation Agent** (`skills/agents/implementation-agent.md`) with:
+```
+PROJECT_ROOT, FIGMA_FILE_KEY, FIGMA_NODE_ID, COMPONENT_NAME,
+MODE, DESIGN_SYSTEM, JIRA_CONTEXT (if any),
+PREVIOUS_COMBINED_REPORT (if iteration > 1),
+DELTA_REPORT (if Upgrade Mode)
+```
+
+Model: Sonnet by default. Escalate to Opus if this component is on iteration 3+ with the same blocker.
+
+Receive the `ReviewSpec` from the agent.
+
+Print: `[pixel-twin] [N/TOTAL] COMPONENT_NAME — implementing... done`
+
+### 5b — Review (parallel)
+
+Spawn the **Visual Review Agent** and **Code Review Agent** simultaneously as parallel subagents.
+
+Visual Review Agent (`skills/agents/visual-review-agent.md`):
+```
+PIXEL_TWIN_ROOT, PROJECT_ROOT, AUTH_HELPER, REVIEW_SPEC
+```
+Model: Sonnet.
+
+Code Review Agent (`skills/agents/code-review-agent.md`):
+```
+PROJECT_ROOT, CHANGED_FILES (from ReviewSpec.filesChanged),
+COMMANDS, DESIGN_SYSTEM, SAFETY_PROFILE, CONVENTION_PROFILE
+```
+Model: Haiku (Phase 1) → Sonnet (Phase 2, only if Phase 1 passes).
+
+Print: `[pixel-twin] [N/TOTAL] COMPONENT_NAME — reviewing (visual + code in parallel)...`
+
+### 5c — Evaluate CombinedReport
+
+Merge the two reports:
+
+```typescript
+interface CombinedReport {
+  iteration: number
+  component: string
+  visualIssues: VisualDiffReport['issues']   // from Visual Review Agent
+  codeIssues: CodeReviewReport['phase2']['issues']  // from Code Review Agent
+  hasBlockers: boolean   // true if either report has blockers
+  summary: string
+}
+```
+
+**If `hasBlockers: false`**:
+- Print: `[pixel-twin] [N/TOTAL] COMPONENT_NAME — ✓ pass (TRACK_A_PASS_RATE computed-style checks, N code issues)`
+- Advance to next component
+
+**If `hasBlockers: true`**:
+
+Print blockers clearly:
+```
+[pixel-twin] [N/TOTAL] COMPONENT_NAME — N blockers (iteration I)
+  Visual:
+    · [blocker] padding-left: 12px → expected 16px
+      Fix: change p-3 to p-4 on root element
+  Code:
+    · [blocker] Raw error message logged at sidebar.tsx:47
+      Fix: wrap in sanitizeErrorMessage()
+```
+
+Check the **stuck escalation ladder**:
+- Iteration ≤ 2: send CombinedReport back to Implementation Agent, loop
+- Iteration 3: re-read Figma node directly, look for missed subtleties, try different approach
+- Iteration 4: escalate Implementation Agent to Opus
+- Iteration 5+: surface to human (see §Checkpoint)
+
+**Auto-handle non-blockers**:
+- `rendering-delta`: log silently, add to sign-off documentation
+- `marginal` with confidence ≥ 0.85: auto-accept, log as "auto-accepted"
+- `marginal` with confidence < 0.85: accumulate — surface at next checkpoint
+
+### 5d — Checkpoint trigger
+
+A checkpoint surfaces to the human only when:
+1. Accumulated low-confidence marginals exist (≥ 3 items, or any item with confidence < 0.6)
+2. A component reaches the escalation ceiling (iteration 5+)
+3. `config.review.checkpointEvery` is set AND that many components have completed
+
+**When no checkpoint condition is met**: continue silently.
+
+**Checkpoint format**:
+```
+━━━ pixel-twin checkpoint ━━━━━━━━━━━━━━━━━━━━━━
+
+Progress: N/TOTAL components done
+  ✓ Header, FilterSidebar, TabBar
+  ↻ RequestSidebar (stuck — iteration 5)
+
+[If stuck] What I tried:
+  · Iteration 2: adjusted padding values
+  · Iteration 3: re-read Figma, found shadow definition was multi-layer
+  · Iteration 4: tried box-shadow shorthand vs individual properties (Opus)
+  · Still failing: box-shadow spread 3px vs Figma 4px
+
+[If marginals] Low-confidence items (your call):
+  · RequestSidebar — box-shadow spread: 3px vs 4px [confidence: 58%]
+    → Likely rendering delta. Recommend: accept.
+  · Tag — padding-right: 11px vs 12px [confidence: 62%]
+    → Borderline. Recommend: fix.
+
+Options:
+  A. Accept all and continue
+  B. Fix Tag padding, accept shadow, continue
+  C. Hint: [your context here]
+  D. Skip this component entirely
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+---
+
+## Step 6 — Full-page integration pass
+
+After all components pass, run one final verification pass on the full page:
+
+1. Take a full-page screenshot at the Figma frame's exact dimensions
+2. Get the full-frame Figma screenshot via `get_design_context` on the root `nodeId`
+3. Run `scripts/pixelmatch-compare.ts` on the two images
+4. Spawn Visual Review Agent on the root selector to verify:
+   - Spacing between components (not within them — that's already done)
+   - Overall visual rhythm and alignment
+   - Any interactive states that have explicit Figma frames/variants
+
+If the integration pass finds structural issues: fix them (they are typically spacing between components, not within them — usually a 1-line CSS change).
+
+---
+
+## Step 7 — Final sign-off
 
 ```
-TODO: Implement Orchestrator logic here.
+━━━ pixel-twin: implementation complete ━━━━━━━━━
 
-Reference: docs/design-spec.md
+[Side-by-side: Figma screenshot vs app screenshot]
 
-Steps:
-1. Parse figma_url → extract fileKey + nodeId
-2. (If jira_ticket_url) → fetch ticket via Atlassian MCP
-3. Read Figma metadata → build component queue (outside-in order)
-4. Scan codebase → detect Build or Upgrade mode
-5. (Upgrade only) → run audit → generate DeltaReport → filter queue
-6. Verify dev server → auto-start if needed
-7. Component loop (see design-spec.md §10):
-   a. Spawn Implementation Agent (Sonnet/Opus)
-   b. Spawn Visual Review Agent + Code Review Agent in parallel (Haiku/Sonnet)
-   c. Merge reports → CombinedReport
-   d. hasBlockers? loop : next component
-   e. Every 3 components → Checkpoint
-8. Full-page integration pass
-9. Final sign-off
+Verified:
+  ✓ N computed style properties across M components
+  ✓ TypeScript, lint, and tests — all pass
+  ✓ Safety profile: {safetyProfile} — no issues
+  ✓ Design system ({designSystem}) components used correctly
+
+Rendering deltas (documented, not blocking):
+  · [list of auto-accepted rendering deltas with explanation]
+
+Auto-accepted marginals:
+  · [list of high-confidence marginals that were auto-accepted]
+
+Changed files:
+  [full list from all ReviewSpec.filesChanged across all components]
+
+No git changes made. Review the diff and commit when ready.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
+
+---
+
+## Rules for the Orchestrator
+
+- **Never write code yourself.** Delegate all code changes to the Implementation Agent.
+- **Never make visual judgments yourself.** Delegate all visual comparisons to the Visual Review Agent.
+- **Never run typecheck/lint/test yourself.** Delegate to the Code Review Agent.
+- **Always print a status line before and after each agent invocation.** Never go silent.
+- **If an agent returns malformed output** (not valid JSON, missing required fields): retry once with an explicit note that the output format was wrong. If it fails again, treat it as a blocker and surface to the user.
+- **Keep the sign-off honest.** If rendering deltas remain, document them — do not hide them. The engineer needs the full picture to commit confidently.
