@@ -4,19 +4,20 @@ A Claude Code skill that automates the frontend UI implementation loop — from 
 
 The name says it all: when the skill works, the running app and the Figma mock are indistinguishable side-by-side. They are pixel twins.
 
-**Status: v0.1 — Design complete, implementation in progress**
+**Status: v2.0 redesign in progress — see [`docs/pixel-twin-v2-design.md`](docs/pixel-twin-v2-design.md)**
 
 ---
 
 ## What it does
 
-Given a Figma URL (and optional Jira ticket), the skill:
+Given a page-level Figma frame URL, the skill:
 
 1. Detects whether the UI is new (**Build Mode**) or existing (**Upgrade Mode**)
-2. Implements or refines components using exact Figma Inspect values
-3. Runs Visual Review (computed styles + screenshot diff) and Code Review in parallel
-4. Iterates until both pass, surfacing checkpoints to the engineer along the way
-5. Produces a final sign-off with side-by-side comparison and changed file list
+2. Builds a **Coverage Map** — a systematic checklist of every CSS property to verify, with selectors and expected values derived from Figma and Dart V1 design tokens
+3. Implements or fixes components using exact Figma values, outside-in (Level 0 → 1 → 2 → 3)
+4. Verifies each component against the Coverage Map via computed styles
+5. Iterates until all Coverage Map rows pass, then moves to the next component
+6. Produces a final report of pass/fail counts and any Figma inconsistencies flagged for the designer
 
 The success bar: a designer looking at the running app and the Figma mock side-by-side cannot tell which is which.
 
@@ -25,19 +26,19 @@ The success bar: a designer looking at the running app and the Figma mock side-b
 ## Usage
 
 ```
-/pixel-twin <figma_url> [jira_ticket_url]
+/pixel-twin <page-level-figma-url>
 ```
 
-Or paste a Figma URL in conversation — the skill will offer to activate.
+- URL must be a page-level frame (right-click → Copy link to selection on the outermost frame in Figma)
+- If the URL is too broad (root canvas), pixel-twin will list top-level frames for you to select
 
 ---
 
 ## Prerequisites
 
 - Figma MCP connected and authenticated
-- Dev server runnable via `npm run dev` (auto-started if not running)
-- Playwright available (`npx playwright`)
-- Atlassian MCP configured (optional, for Jira ticket reading)
+- Dev server runnable (auto-started if not running)
+- `npx tsx` available (TypeScript script runner)
 
 ---
 
@@ -48,7 +49,7 @@ Or paste a Figma URL in conversation — the skill will offer to activate.
 git clone https://github.com/aochengyu/pixel-twin.git
 ```
 
-Plugin distribution coming once v1.0 is stable.
+Plugin distribution coming once v2.0 is stable.
 
 ---
 
@@ -56,14 +57,21 @@ Plugin distribution coming once v1.0 is stable.
 
 ```
 skills/
-  pixel-twin.md            # Main orchestrator skill
+  pixel-twin.md                  # Main orchestrator skill (self-contained)
+  agents/
+    implementation-agent.md      # Implements / fixes components (Opus)
+    visual-review-agent.md       # Runs computed-styles verification (Sonnet)
+    code-review-agent.md         # CSS/prop + semantic code review (Haiku → Sonnet)
+    dart-knowledge.md            # Dart V1 design system reference
 scripts/
-  screenshot.ts            # Playwright screenshot utility
-  computed-styles.ts       # CSS computed styles extractor
-  pixelmatch-compare.ts    # Image diff utility
+  computed-styles.ts             # Batch CSS computed styles extractor (Playwright)
+  bounding-boxes.ts              # Bounding box comparison utility
+  screenshot.ts                  # Playwright screenshot utility
+  auth-integrated-roi.ts         # Auth helper for integrated-roi project
 docs/
-  design-spec.md           # Full architecture specification
-CHANGELOG.md               # Version history
+  pixel-twin-v2-design.md        # Current architecture specification (v2)
+  design-spec.md                 # v1 architecture specification (superseded)
+CHANGELOG.md                     # Version history
 ```
 
 ---
@@ -82,7 +90,6 @@ export const config = {
   },
   dev: {
     port: 3000,
-    mockLoginUrl: "/login",
     authHelper: "e2e/helpers/auth.ts",
     designSystem: "@your-org/design-system"
   }
@@ -93,25 +100,22 @@ export const config = {
 
 ## Roadmap
 
-See [`docs/design-spec.md`](docs/design-spec.md) for the full architecture and [`CHANGELOG.md`](CHANGELOG.md) for version history.
+See [`docs/pixel-twin-v2-design.md`](docs/pixel-twin-v2-design.md) for the current architecture and [`CHANGELOG.md`](CHANGELOG.md) for version history.
 
 | Version | Theme | Status |
 |---------|-------|--------|
-| v0.1 | Design complete, scaffold | Done |
-| v1.0 | First working implementation (Build + Upgrade modes) | In progress |
-| v2.0 | Interactive states, animations, form validation | Planned |
-| v3.0 | Responsive/breakpoints, Storybook, multi-design-system | Planned |
+| v1.0 | First implementation (v1 architecture) | Superseded by v2 redesign |
+| v2.0 | Redesigned architecture — Coverage Map, real orchestration, closed verify-fix loop | In progress |
+| v3.0 | Interactive states, animations, form validation | Planned |
+| v4.0 | Responsive/breakpoints, Storybook, multi-design-system | Planned |
 
 ---
 
-## Design
+## Key Design Decisions
 
-See [`docs/design-spec.md`](docs/design-spec.md) for the full architecture.
-
-Key decisions:
-- Figma read **on-demand** per component (not pre-processed upfront)
-- **Computed styles** as primary verification (data-independent, exact px/hex values)
-- **Screenshot** as secondary verification (structure, visual weight, icons)
-- Visual Review + Code Review run **in parallel** as stateless subagents
-- **Two modes**: Build (new UI from scratch) and Upgrade (targeted fixes to existing UI)
-- **Three diff categories**: Structural (always block) / Marginal (engineer decides) / Rendering Delta (never block)
+- **Coverage Map as primary mechanism**: systematic checklist of CSS properties per component; Orchestrator context stays O(1) via file-based state
+- **Source of truth = Dart V1 design tokens**: Figma values are cross-referenced but not trusted; discrepancies are flagged to the designer, not treated as failures
+- **Sequential sub-agents only**: Implementation → Visual Review → Code Review run sequentially per component; never parallel (parallel agents block each other)
+- **Computed styles as the verification method**: exact px/hex/rgb values from the browser; no screenshot diffs for pass/fail decisions
+- **Outside-in development**: Level 0 (page shell) → 1 (sections) → 2 (components) → 3 (micro-details); each level verified before going deeper
+- **Self-contained skill**: pixel-twin depends only on Figma MCP, `npx tsx` scripts, and Claude Code's native Agent tool — no external skill frameworks

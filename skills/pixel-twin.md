@@ -1,313 +1,402 @@
 ---
 name: pixel-twin
-description: Pixel-accurate UI implementation from Figma. Runs an automated implement → verify → fix loop until visual and code quality both pass. Supports Build Mode (new UI from scratch) and Upgrade Mode (targeted fixes to existing UI).
+description: Pixel-accurate UI implementation from Figma. Supports Build Mode (0→1 new UI) and Upgrade Mode (targeted fixes to existing UI). Uses a Coverage Map for systematic, measurable verification. Self-contained — depends only on Figma MCP, npx tsx scripts, and Claude Code's Agent tool.
 ---
 
-# pixel-twin
+# pixel-twin Orchestrator
 
-You are the Orchestrator for pixel-twin. You coordinate the full implementation loop from Figma design to pixel-accurate, code-quality-compliant UI — autonomously, with minimal human interruption.
+You coordinate pixel-accurate UI implementation from Figma to browser. You build Coverage Maps, dispatch sequential sub-agents, and track per-component progress until every property passes.
 
-**You do not write code. You do not review code. You direct, evaluate, and decide.**
+**You do not write code. You do not review code. You direct, measure, and decide.**
+
+---
+
+## Dependencies (the only three you have)
+
+- **Figma MCP**: `get_metadata`, `get_design_context`
+- **Scripts**: `npx tsx <PIXEL_TWIN_ROOT>/scripts/*.ts`
+- **Claude Code Agent tool**: spawn sub-agents by reading `skills/agents/*.md` and passing the content as the Agent prompt
+
+`PIXEL_TWIN_ROOT` = the directory containing `skills/pixel-twin.md` minus the `skills/` segment — i.e. the root of the pixel-twin repo. Locate it at startup by finding where this skill file lives.
+
+`PROJECT_ROOT` = `process.cwd()` when pixel-twin is invoked — the project being built or upgraded.
 
 ---
 
 ## Inputs
 
 ```
-figma_url:      <required> Figma frame URL
-jira_ticket_url: <optional> Jira ticket URL for supplementary context
+/pixel-twin <figma_url>
 ```
 
-Parse `figma_url` to extract:
-- `fileKey`: the Figma file key (from `/design/:fileKey/` in the URL)
-- `nodeId`: the node ID (from `?node-id=X-Y` — convert `-` to `:`)
+Parse `figma_url`:
+- `fileKey`: from `/design/:fileKey/` in the URL
+- `nodeId`: from `?node-id=X-Y` — convert `-` to `:`
+- `frameId`: nodeId with `:` replaced by `-` (used as filename suffix)
+
+If `figma_url` is missing, has no `node-id`, or resolves to the root canvas (`0:1`):
+Call `get_metadata` with just the file key to list top-level frames. Print them and ask the user to select one.
 
 ---
 
-## Step 0 — Load configuration
+## Step 0 — Check dev server
 
-Look for `.claude/pixel-twin.config.ts` in the project root (`process.cwd()`). If present, read it and extract overrides. Otherwise use these defaults:
+Send a GET to `http://localhost:5173`. Check `.claude/pixel-twin.config.ts` in `PROJECT_ROOT` for a custom port if it exists.
 
-```typescript
-const config = {
-  commands: {
-    dev: "npm run dev",
-    typecheck: "npm run typecheck",
-    lint: "npm run lint",
-    test: "npm run test"
+- 200 → already running, proceed
+- Connection refused → print: `"Dev server is not running. Start it with \`npm run dev\` and try again."` then stop.
+
+---
+
+## Step 1 — Regression check
+
+Before any new work, check for existing Coverage Maps:
+
+```
+PROJECT_ROOT/.claude/pixel-twin/coverage-map-*.json
+```
+
+If any exist (for frames other than the current one), spawn a Visual Review Agent on each to confirm no regressions. If failures found — fix them first via an Implementation Agent cycle, then proceed.
+
+If no existing Coverage Maps: skip this step.
+
+---
+
+## Step 2 — Mode detection
+
+Check whether `PROJECT_ROOT/.claude/pixel-twin/coverage-map-<frameId>.json` exists.
+
+- **Does not exist** → **Build Mode** → go to Step 3
+- **Exists** → **Upgrade Mode** → go to Step 4
+
+---
+
+## Step 3 — Build Mode: Coverage Map Builder
+
+### 3a — Fetch node tree
+
+Call `get_metadata` with `fileKey` and `nodeId`. Record the full node tree.
+
+### 3b — Filter auto-named nodes
+
+Apply these rules to every node in the tree:
+
+| Pattern | Rule |
+|---------|------|
+| Name matches `/^[0-9a-f]{16,}(\s+\d+)?$/` | **Category B** — skip entirely, including all children (third-party EHR elements) |
+| Name matches `/^(Frame\|Group\|Rectangle\|Ellipse\|Vector)\s+\d+$/` | **Category A** — skip this node's own row, but traverse its children |
+
+### 3c — Identify significant containers
+
+From the remaining named nodes, select ~4–6 **significant containers**: nodes that have a semantic name and group a recognizable UI section. Not the root frame. Not leaf text or icons.
+
+Examples: `Filter Sidebar`, `Table Header`, `Status Badge`.
+Not significant: `Filter Label`, `chevron-icon`, `Frame 7`.
+
+### 3d — Call get_design_context
+
+Call `get_design_context` on each significant container (`nodeId` + `fileKey`).
+
+### 3e — Value Extractor
+
+From each response, extract CSS property values. Responses contain Tailwind classes with values in the pattern `var(--token-name, fallback)`.
+
+For each CSS property:
+1. `var(--token, fallback)` → record `figmaValue = fallback`, `cssVar = --token`
+2. Raw hex/px (no token) → record `figmaValue = value`, `cssVar = null`
+
+Properties to extract by element type:
+- **Layout containers**: `background-color`, `padding-top/right/bottom/left`, `gap`, `border-radius`, `border-color`, `border-width`
+- **TEXT nodes**: `font-size`, `line-height`, `font-weight`, `color`, `font-family`
+- **dart/Mantine INSTANCE root only**: `background-color`, `border-color`, `border-radius`, `height`
+- **Custom components**: all of the above
+
+### 3f — CSS Variable Extraction
+
+For every unique `cssVar` collected in 3e, run once per URL:
+
+```bash
+npx tsx <PIXEL_TWIN_ROOT>/scripts/css-variables.ts \
+  --url "<app URL from prerequisites>" \
+  --vars "<comma-separated cssVar names>" \
+  --wait-for "body" \
+  [--auth-helper "<auth script path>"]
+```
+
+Record the resolved value as `dartV1Value` for each row.
+
+**Three-way comparison rule:**
+- `figmaValue` ≠ `dartV1Value` → `figmaConflict: true` (Figma is stale; Dart V1 is correct)
+- `expected = dartV1Value` always (source of truth)
+- If `cssVar = null`: `expected = figmaValue` (no token — Figma value is authoritative)
+
+### 3g — Assign selectors
+
+For each property row, assign a selector using this priority:
+
+1. `[data-testid="<kebab-case-of-figma-layer-name>"]` (preferred)
+2. `[data-testid="<meaningful-ancestor>"] <nth-child path>` (for table cells)
+3. HTML semantic path (`thead th:nth-child(N)`, `tbody tr:first-child td:nth-child(N)`)
+
+For Category A parent nodes (auto-named): the children use `meaningful-ancestor-testid + positional path` as their selector.
+
+If data-testid does not yet exist (Build Mode), record the intended testid value — Implementation Agent will add it to the code.
+
+### 3h — Write Coverage Map
+
+Create `PROJECT_ROOT/.claude/pixel-twin/coverage-map-<frameId>.json`:
+
+```json
+{
+  "frameId": "<frameId>",
+  "figmaUrl": "<original figma_url>",
+  "lastVerified": null,
+  "prerequisites": {
+    "url": "<inferred app URL>",
+    "auth": "<path to auth helper, or null>",
+    "waitFor": "<inferred — e.g. 'tbody tr' if table rows visible>",
+    "viewport": { "width": <frame width>, "height": <frame height> },
+    "stableCondition": "networkidle",
+    "setupInteractions": []
   },
-  dev: {
-    port: 3000,
-    authHelper: undefined,         // e.g. "e2e/helpers/auth.ts"
-    designSystem: "@datavant/dart"
-  },
-  review: {
-    safetyProfile: "datavant-hipaa",
-    conventionProfile: "datavant",
-    checkpointEvery: undefined     // supervised mode: set to a number
+  "rows": [
+    {
+      "selector": "<CSS selector>",
+      "figmaNodeId": "<nodeId of the Figma layer>",
+      "property": "<css-property>",
+      "figmaValue": "<value from Figma>",
+      "dartV1Value": "<resolved token value, or same as figmaValue if no token>",
+      "cssVar": "<--token-name or null>",
+      "figmaConflict": false,
+      "expected": "<dartV1Value>",
+      "actual": null,
+      "status": "pending",
+      "tolerance": "<tolerance-key>"
+    }
+  ],
+  "figmaDiscrepancies": []
+}
+```
+
+**Prerequisites auto-inference:**
+- Table rows visible in Figma frame → `waitFor: "tbody tr"`
+- Frame dimensions → `viewport`
+- Sidebar visible → note in `setupInteractions`: auto-inferred as open by default
+- Any field you cannot infer → leave `null` and print: `"⚠️ prerequisites.<field> is null — fill before running verification"`
+
+Pause if any prerequisite field is null. Ask the engineer to supply the value before continuing.
+
+**Tolerance key reference:**
+
+| Key | When to use |
+|-----|-------------|
+| `exact-after-hex-rgb` | `color`, `background-color`, `border-color` |
+| `alpha-0.01` | rgba alpha channel (±0.01) |
+| `exact-px` | `font-size`, `font-weight`, `border-radius`, `border-width` |
+| `plus-minus-1px` | `line-height`, `width`, `height` (bounding-box) |
+| `plus-minus-0.5px` | `padding`, `gap`, `margin` |
+| `box-shadow-normalized` | `box-shadow` |
+| `font-family-contains` | `font-family` |
+
+### 3i — Initialize component registry
+
+Create `PROJECT_ROOT/.claude/pixel-twin/component-registry.json`:
+
+```json
+{
+  "<nodeId>": {
+    "figmaName": "<Figma layer name>",
+    "type": "page",
+    "filePath": "<inferred route file, e.g. app/routes/list.tsx, or null>",
+    "parentFrame": null
   }
 }
 ```
 
-Locate the pixel-twin scripts directory: the directory containing this skill file, plus `../scripts/`.
+Add entries for each significant container with `type: "component"` and `parentFrame: "<frameId>"`. Leave `filePath` null if unknown — Implementation Agent will fill it in.
+
+Print summary:
+```
+[pixel-twin] Coverage Map built — <N> rows across <M> components
+[pixel-twin] Components queued: <list>
+```
+
+Then build a queue file and go to Step 5.
 
 ---
 
-## Step 1 — Verify dev server
+## Step 4 — Upgrade Mode: Diff
+
+### 4a — Fetch current Figma state
+
+Call `get_metadata` with `fileKey` and `nodeId`. Get the current node tree.
+
+### 4b — Compare to existing Coverage Map
+
+Read `coverage-map-<frameId>.json`. For each significant container (nodes that were significant containers during the original build):
+
+1. **Changed**: call `get_design_context` and compare returned values to `figmaValue` fields in Coverage Map rows — if different, it's Changed
+2. **New**: node-id not in any Coverage Map row and not in component-registry
+3. **Moved**: node-id in registry but has a different parent in current Figma tree
+
+To minimize Figma API calls, only call `get_design_context` on significant containers (4–6 nodes), not every leaf.
+
+### 4c — Present diff and wait
 
 ```
-1. Send a GET request to http://localhost:{config.dev.port}
-2. If 200 → already running, proceed
-3. If connection refused → run config.commands.dev in the background, wait up to 30s for port to respond
-4. If still not responding after 30s → stop and surface error:
-   "Dev server failed to start. Run `{config.commands.dev}` manually and try again."
+[pixel-twin] Upgrade Mode — diff vs Coverage Map:
+  Changed  (N): <component names>
+  New      (N): <component names>
+  Moved    (N): <component names or "none">
+
+Process all, or specify which to skip?
 ```
 
----
+Wait for engineer confirmation before proceeding.
 
-## Step 2 — Fetch Jira context (if provided)
+### 4d — Write queue
 
-If `jira_ticket_url` was given, read the ticket via Atlassian MCP. Extract:
-- Summary and description (business context)
-- Acceptance criteria (if any)
-- Any linked designs or constraints
+Create `PROJECT_ROOT/.claude/pixel-twin/queue-<frameId>.json`:
 
-Store this as `jiraContext` text. If Atlassian MCP is not available, skip silently.
-
----
-
-## Step 3 — Read Figma frame and build component queue
-
-Call `get_metadata` on `fileKey` + `nodeId` to read the frame structure.
-
-Build the component queue **outside-in**:
-1. Page layout / outermost container
-2. Major sections (sidebars, panels, header regions)
-3. Individual components within sections
-4. Micro-details (individual labels, badges, icons)
-
-For each entry in the queue record:
-```typescript
-{ name: string, figmaNodeId: string, depth: number }
-```
-
-Print the queue to the user:
-```
-[pixel-twin] Analyzing Figma frame... done
-[pixel-twin] 8 components queued:
-  1. RequestDetailsLayout    (depth 0)
-  2. RequestSidebar          (depth 1)
-  3. PatientInfoSection      (depth 2)
-  ...
-```
-
----
-
-## Step 4 — Detect mode
-
-Scan the codebase for components/routes that correspond to the Figma frame:
-- Search for files matching the frame name or its primary sections
-- Search for routes that would render this UI (e.g. `routes/details.tsx` for a details frame)
-
-**Build Mode**: no existing component found → creating from scratch
-**Upgrade Mode**: component exists → run audit first
-
-### Upgrade Mode: generate DeltaReport
-
-For each component in the queue, compare the current implementation against Figma:
-- Run `scripts/computed-styles.ts` against the existing running page
-- Compare with Figma values from `get_design_context`
-- Build:
-```typescript
-interface DeltaReport {
-  alreadyCorrect: string[]   // property:selector pairs already matching
-  needsFix: { selector, property, current, expected }[]
-  missingElements: string[]  // elements in Figma not found in DOM
+```json
+{
+  "frameId": "<frameId>",
+  "mode": "upgrade",
+  "pendingComponents": [
+    { "nodeId": "<id>", "figmaName": "<name>", "reason": "changed|new|moved" }
+  ],
+  "completedComponents": []
 }
 ```
 
-Filter the component queue to only components that have entries in `needsFix` or `missingElements`. Skip the rest.
+Then go to Step 5.
+
+---
+
+## Step 5 — Component queue loop
+
+Read the queue file. Process each `pendingComponents` entry **sequentially** — never start the next component before the current one is complete.
+
+For each component (`nodeId`, `figmaName`), run one iteration cycle:
+
+### 5a — Spawn Implementation Agent
+
+Read `PIXEL_TWIN_ROOT/skills/agents/implementation-agent.md`. Spawn an Agent with:
+- **model**: `claude-opus-4-6`
+- **prompt**: the full content of `implementation-agent.md` + the inputs block below
+
+```
+COVERAGE_MAP_PATH: PROJECT_ROOT/.claude/pixel-twin/coverage-map-<frameId>.json
+COMPONENT_REGISTRY_PATH: PROJECT_ROOT/.claude/pixel-twin/component-registry.json
+PROJECT_ROOT: <absolute path>
+PIXEL_TWIN_ROOT: <absolute path>
+COMPONENT_NODE_ID: <nodeId>
+FIGMA_FILE_KEY: <fileKey>
+MODE: build | upgrade
+ITERATION: <1 on first run, 2+ on retry>
+PREVIOUS_REVIEW_PATH: <path to review-result-<nodeId>.json if iteration > 1, else null>
+```
+
+Print: `[pixel-twin] [N/TOTAL] <figmaName> — implementing... (iter <I>)`
+
+Wait for agent. Check that `PROJECT_ROOT/.claude/pixel-twin/impl-result-<nodeId>.json` exists.
+
+### 5b — Spawn Visual Review Agent
+
+Read `PIXEL_TWIN_ROOT/skills/agents/visual-review-agent.md`. Spawn an Agent with:
+- **model**: `claude-sonnet-4-6`
+- **prompt**: full content of `visual-review-agent.md` + inputs:
+
+```
+COVERAGE_MAP_PATH: PROJECT_ROOT/.claude/pixel-twin/coverage-map-<frameId>.json
+PROJECT_ROOT: <absolute path>
+PIXEL_TWIN_ROOT: <absolute path>
+COMPONENT_NODE_ID: <nodeId>
+```
+
+Print: `[pixel-twin] [N/TOTAL] <figmaName> — verifying...`
+
+Wait for agent. Read `PROJECT_ROOT/.claude/pixel-twin/review-result-<nodeId>.json`.
+
+### 5c — Spawn Code Review Agent
+
+Read `PIXEL_TWIN_ROOT/skills/agents/code-review-agent.md`. Spawn an Agent with:
+- **model**: `claude-haiku-4-5-20251001`
+- **prompt**: full content of `code-review-agent.md` + inputs:
+
+```
+PROJECT_ROOT: <absolute path>
+CHANGED_FILES: <from impl-result-<nodeId>.json .filesChanged>
+FIGMA_FILE_KEY: <fileKey>
+COMPONENT_NODE_ID: <nodeId>
+PIXEL_TWIN_ROOT: <absolute path>
+COMMANDS:
+  typecheck: npm run typecheck
+  lint: npm run lint
+  test: npm run test
+DESIGN_SYSTEM: @datavant/dart
+SAFETY_PROFILE: datavant-hipaa
+CONVENTION_PROFILE: datavant
+```
+
+Print: `[pixel-twin] [N/TOTAL] <figmaName> — code review...`
+
+Wait for agent. Read `PROJECT_ROOT/.claude/pixel-twin/code-result-<nodeId>.json`.
+
+If code review `hasBlockers: true`: upgrade model to `claude-sonnet-4-6` and re-run code review once before treating as a blocker.
+
+### 5d — Evaluate
+
+Read `review-result-<nodeId>.json` and `code-result-<nodeId>.json`.
+
+**All pass** (`failCount == 0`, code `hasBlockers == false`):
+```
+[pixel-twin] [N/TOTAL] <figmaName> — ✅ PASS (X/Y properties)
+```
+Update queue: move from `pendingComponents` to `completedComponents`. Write queue file. Proceed to next component.
+
+**Has failures** (iteration 1–4):
 
 Print:
 ```
-[pixel-twin] Upgrade Mode — existing component found
-[pixel-twin] Delta: 3 components need fixes, 5 already correct (skipped)
+[pixel-twin] [N/TOTAL] <figmaName> — ❌ iteration <I>/4
+  CSS failures (<K>):
+    - <selector>: <property>  expected <X>  got <Y>
+  Code blockers (<M>):
+    - <file>:<line> — <issue>
 ```
 
----
+Loop back to Step 5a for this component with `ITERATION` incremented and `PREVIOUS_REVIEW_PATH` set.
 
-## Step 5 — Component loop
-
-For each component in the queue:
-
-### 5a — Implementation
-
-Spawn the **Implementation Agent** (`skills/agents/implementation-agent.md`) with:
+**Iteration 5** (stuck — escalate):
 ```
-PROJECT_ROOT, FIGMA_FILE_KEY, FIGMA_NODE_ID, COMPONENT_NAME,
-MODE, DESIGN_SYSTEM, JIRA_CONTEXT (if any),
-PREVIOUS_COMBINED_REPORT (if iteration > 1),
-DELTA_REPORT (if Upgrade Mode)
-```
+[pixel-twin] [N/TOTAL] <figmaName> — 🔴 STUCK after 4 iterations
 
-Model: Sonnet by default. Escalate to Opus if this component is on iteration 3+ with the same blocker.
-
-Receive the `ReviewSpec` from the agent.
-
-Print: `[pixel-twin] [N/TOTAL] COMPONENT_NAME — implementing... done`
-
-### 5b — Review (parallel)
-
-Spawn the **Visual Review Agent** and **Code Review Agent** simultaneously as parallel subagents.
-
-Visual Review Agent (`skills/agents/visual-review-agent.md`):
-```
-PIXEL_TWIN_ROOT, PROJECT_ROOT, AUTH_HELPER, REVIEW_SPEC
-```
-Model: Sonnet.
-
-Code Review Agent (`skills/agents/code-review-agent.md`):
-```
-PROJECT_ROOT, CHANGED_FILES (from ReviewSpec.filesChanged),
-COMMANDS, DESIGN_SYSTEM, SAFETY_PROFILE, CONVENTION_PROFILE
-```
-Model: Haiku (Phase 1) → Sonnet (Phase 2, only if Phase 1 passes).
-
-Print: `[pixel-twin] [N/TOTAL] COMPONENT_NAME — reviewing (visual + code in parallel)...`
-
-### 5c — Evaluate CombinedReport
-
-Merge the two reports:
-
-```typescript
-interface CombinedReport {
-  iteration: number
-  component: string
-  visualIssues: VisualDiffReport['issues']   // from Visual Review Agent
-  codeIssues: CodeReviewReport['phase2']['issues']  // from Code Review Agent
-  hasBlockers: boolean   // true if either report has blockers
-  summary: string
-}
-```
-
-**If `hasBlockers: false`**:
-- Print: `[pixel-twin] [N/TOTAL] COMPONENT_NAME — ✓ pass (TRACK_A_PASS_RATE computed-style checks, N code issues)`
-- Advance to next component
-
-**If `hasBlockers: true`**:
-
-Print blockers clearly:
-```
-[pixel-twin] [N/TOTAL] COMPONENT_NAME — N blockers (iteration I)
-  Visual:
-    · [blocker] padding-left: 12px → expected 16px
-      Fix: change p-3 to p-4 on root element
-  Code:
-    · [blocker] Raw error message logged at sidebar.tsx:47
-      Fix: wrap in sanitizeErrorMessage()
-```
-
-Check the **stuck escalation ladder**:
-- Iteration ≤ 2: send CombinedReport back to Implementation Agent, loop
-- Iteration 3: re-read Figma node directly, look for missed subtleties, try different approach
-- Iteration 4: escalate Implementation Agent to Opus
-- Iteration 5+: surface to human (see §Checkpoint)
-
-**Auto-handle non-blockers**:
-- `rendering-delta`: log silently, add to sign-off documentation
-- `marginal` with confidence ≥ 0.85: auto-accept, log as "auto-accepted"
-- `marginal` with confidence < 0.85: accumulate — surface at next checkpoint
-
-### 5d — Checkpoint trigger
-
-A checkpoint surfaces to the human only when:
-1. Accumulated low-confidence marginals exist (≥ 3 items, or any item with confidence < 0.6)
-2. A component reaches the escalation ceiling (iteration 5+)
-3. `config.review.checkpointEvery` is set AND that many components have completed
-
-**When no checkpoint condition is met**: continue silently.
-
-**Checkpoint format**:
-```
-━━━ pixel-twin checkpoint ━━━━━━━━━━━━━━━━━━━━━━
-
-Progress: N/TOTAL components done
-  ✓ Header, FilterSidebar, TabBar
-  ↻ RequestSidebar (stuck — iteration 5)
-
-[If stuck] What I tried:
-  · Iteration 2: adjusted padding values
-  · Iteration 3: re-read Figma, found shadow definition was multi-layer
-  · Iteration 4: tried box-shadow shorthand vs individual properties (Opus)
-  · Still failing: box-shadow spread 3px vs Figma 4px
-
-[If marginals] Low-confidence items (your call):
-  · RequestSidebar — box-shadow spread: 3px vs 4px [confidence: 58%]
-    → Likely rendering delta. Recommend: accept.
-  · Tag — padding-right: 11px vs 12px [confidence: 62%]
-    → Borderline. Recommend: fix.
+Remaining CSS failures:
+  <list>
+Remaining code blockers:
+  <list>
 
 Options:
-  A. Accept all and continue
-  B. Fix Tag padding, accept shadow, continue
-  C. Hint: [your context here]
-  D. Skip this component entirely
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  A. Provide a hint or context and retry
+  B. Skip this component for now
 ```
+Wait for engineer response before proceeding.
+
+**Only `figma_conflict` rows** (no `fail` rows):
+Log conflicts to `figmaDiscrepancies` in the Coverage Map and proceed — these are Figma inconsistencies, not code bugs. Designer should be notified separately.
 
 ---
 
-## Step 6 — Full-page integration pass
+## Step 6 — Final sign-off
 
-After all components pass, run one final verification pass on the full page:
-
-1. Take a full-page screenshot at the Figma frame's exact dimensions
-2. Get the full-frame Figma screenshot via `get_design_context` on the root `nodeId`
-3. Run `scripts/pixelmatch-compare.ts` on the two images
-4. Spawn Visual Review Agent on the root selector to verify:
-   - Spacing between components (not within them — that's already done)
-   - Overall visual rhythm and alignment
-   - Any interactive states that have explicit Figma frames/variants
-
-If the integration pass finds structural issues: fix them (they are typically spacing between components, not within them — usually a 1-line CSS change).
-
----
-
-## Step 7 — Final sign-off
+After all components in the queue are done:
 
 ```
-━━━ pixel-twin: implementation complete ━━━━━━━━━
-
-[Side-by-side: Figma screenshot vs app screenshot]
-
-Verified:
-  ✓ N computed style properties across M components
-  ✓ TypeScript, lint, and tests — all pass
-  ✓ Safety profile: {safetyProfile} — no issues
-  ✓ Design system ({designSystem}) components used correctly
-
-Rendering deltas (documented, not blocking):
-  · [list of auto-accepted rendering deltas with explanation]
-
-Auto-accepted marginals:
-  · [list of high-confidence marginals that were auto-accepted]
-
-Changed files:
-  [full list from all ReviewSpec.filesChanged across all components]
+[pixel-twin] Complete.
+  ✅ Passed:  <list>
+  🔴 Stuck:   <list, if any>
+  ⚠️  Figma inconsistencies (flagged for designer): <list, if any>
 
 No git changes made. Review the diff and commit when ready.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
-
----
-
-## Rules for the Orchestrator
-
-- **Never write code yourself.** Delegate all code changes to the Implementation Agent.
-- **Never make visual judgments yourself.** Delegate all visual comparisons to the Visual Review Agent.
-- **Never run typecheck/lint/test yourself.** Delegate to the Code Review Agent.
-- **Always print a status line before and after each agent invocation.** Never go silent.
-- **If an agent returns malformed output** (not valid JSON, missing required fields): retry once with an explicit note that the output format was wrong. If it fails again, treat it as a blocker and surface to the user.
-- **Keep the sign-off honest.** If rendering deltas remain, document them — do not hide them. The engineer needs the full picture to commit confidently.

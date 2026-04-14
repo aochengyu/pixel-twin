@@ -8,12 +8,14 @@ This repo contains a Claude Code skill that automates the frontend UI implementa
 
 A Claude Code skill (plugin) distributed internally at Datavant. It is **not** an application — it contains:
 
-- `skills/pixel-twin.md` — Main orchestrator skill
-- `scripts/` — TypeScript utilities that the skill delegates computation to (screenshot, computed styles, pixelmatch diff)
-- `docs/design-spec.md` — Full architecture specification
+- `skills/pixel-twin.md` — Main orchestrator skill (v2)
+- `skills/agents/` — Sub-agent skill files: `implementation-agent.md`, `visual-review-agent.md`, `code-review-agent.md`, `dart-knowledge.md`
+- `scripts/` — TypeScript utilities: `computed-styles.ts` (batch mode), `css-variables.ts`, `bounding-boxes.ts`, `screenshot.ts`
+- `docs/pixel-twin-v2-design.md` — Current architecture specification (v2)
+- `docs/design-spec.md` — v1 architecture (superseded, kept for reference)
 - `CHANGELOG.md` — Version history (Keep a Changelog format)
 
-When in doubt about design decisions, read `docs/design-spec.md` first.
+When in doubt about design decisions, read `docs/pixel-twin-v2-design.md` first.
 
 ---
 
@@ -82,4 +84,4 @@ The skill's defaults are calibrated for Datavant projects — this is intentiona
 
 ## Roadmap
 
-See `docs/design-spec.md` § 17 (Roadmap) for v2/v3 plans: interactive state verification, responsive breakpoints, animation token checking, multi-design-system support.
+See `docs/pixel-twin-v2-design.md` for current architecture. See GitHub issues for v3/v4 feature plans.

@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Next: calibrate diff thresholds on first real run (#6), UX polish (#7).
+v2 full redesign in progress. See [`docs/pixel-twin-v2-design.md`](docs/pixel-twin-v2-design.md) for the approved spec.
+
+Root causes addressed: fake orchestration, ad-hoc coverage, broken verify-fix loop, unreliable Figma→CSS mapping, no automatic triggering. v1.0.0-alpha architecture is superseded.
 
 ---
 
