@@ -57,7 +57,7 @@ To do a real end-to-end test of the skill, open a Claude Code session in an app 
 - A running dev server
 - A Figma frame with a corresponding component
 
-Then invoke: `/ui-implement <figma_url>`
+Then invoke: `/pixel-twin <figma_url>`
 
 ---
 
@@ -81,6 +81,27 @@ The skill's defaults are calibrated for Datavant projects — this is intentiona
 - Zod for validation at system boundaries
 
 ---
+
+## Key design decisions (survive compaction — read before editing skills)
+
+- **Source of truth = Dart V1 tokens, not Figma.** Figma stale → `figmaConflict`, never FAIL.
+- **Bounding-box rows are mandatory for ALL significant elements**, not just FILL-sized ones. Every layout bug produces a size deviation — this is the universal catch-all.
+- **TEXT nodes always get `isOverflowingX` row** (expected: `"false"`) to catch truncation bugs.
+- **Phase 6 is mandatory full verification**, not a spot-check. Implementation Agent must pass all Coverage Map rows before emitting result.
+- **ITERATION > 1 requires root cause analysis first** — 7 categories defined in implementation-agent.md. No blind re-guessing.
+- **Models**: Orchestrator = Sonnet, Implementation Agent = Opus 4.7, Visual Review = Sonnet, Code Review = Haiku→Sonnet.
+- **Sequential sub-agents only** — never parallel. Parallel agents block each other on file writes.
+- **File-based state (O(1) Orchestrator context)** — Orchestrator never accumulates cross-agent state in memory; reads from disk only. Compaction-safe by design.
+- **Color normalization**: `transparent`/`currentColor`/`hsl()`/`oklch()` all have defined handling in visual-review-agent.md. `currentColor` → `needs-context`, never fail.
+- **`childrenTestids` DOM metric** in computed-styles.ts returns direct children's testids in DOM order — used by structural rows to verify sibling order.
+
+## V1 status (as of 2026-04-21)
+
+Core mechanics, outside-in architecture, complete property matrix, root cause analysis loop, and color normalization are implemented. Remaining before v1.0.0 stable:
+- Pre-flight interactive QA (Step 0c — ask clarifying questions before starting)
+- CI enforcement gate
+- Real run threshold calibration (Issue #6)
+- UX polish (Issue #7)
 
 ## Roadmap
 

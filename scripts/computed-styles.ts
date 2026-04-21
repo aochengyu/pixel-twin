@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * pixel-twin: computed styles extractor
+ * pixel-twin: computed styles + DOM metrics extractor
  *
  * Single mode:  --url <url> --selector <css> [--properties <list>]
  * Batch mode:   --url <url> --batch <json-file>
@@ -9,7 +9,27 @@
  * Batch JSON output: [{ "selector": string, "properties": Record<string,string>, "error": string|null }]
  *
  * Single JSON output: Record<string, string>
+ *
+ * DOM metrics (routed automatically when property name matches):
+ *   scrollWidth, clientWidth, scrollHeight, clientHeight
+ *   offsetWidth, offsetHeight, offsetTop, offsetLeft
+ *   boundingWidth, boundingHeight, boundingTop, boundingLeft, boundingRight, boundingBottom
+ *   isOverflowingX  →  "true"/"false" (scrollWidth > clientWidth — detects text truncation)
+ *   isOverflowingY  →  "true"/"false" (scrollHeight > clientHeight)
  */
+
+/** Properties that must be read from the DOM element directly, not getComputedStyle. */
+const DOM_METRIC_PROPS = new Set([
+  "scrollWidth", "clientWidth", "scrollHeight", "clientHeight",
+  "offsetWidth", "offsetHeight", "offsetTop", "offsetLeft",
+  "boundingWidth", "boundingHeight", "boundingTop", "boundingLeft",
+  "boundingRight", "boundingBottom",
+  "isOverflowingX", "isOverflowingY",
+  // Returns JSON-stringified array of direct children's data-testid values (in DOM order).
+  // Elements without data-testid appear as "<tagname>:<position>", e.g. "div:3".
+  // Used by Visual Review Agent to verify sibling order in structural rows.
+  "childrenTestids",
+])
 
 import { chromium, type Page } from "@playwright/test"
 import { readFileSync } from "fs"
@@ -35,6 +55,9 @@ Options:
   --auth-helper <path>    Path to a .ts file exporting: default async (page: Page) => void
   --wait-for <selector>   Wait for this selector before extracting
   --properties <list>     Comma-separated CSS properties (single mode only)
+  --interactions <json>   JSON array of page interactions to execute before measuring.
+                          Each item: { "action": "click"|"waitFor", "selector": "<css>", "waitFor"?: "<css>" }
+                          Example: '[{"action":"click","selector":"[data-value=exceptions]"},{"action":"waitFor","selector":"[data-tab-id=exceptions]"}]'
   --viewport-width <px>   Viewport width (default: 1440)
   --viewport-height <px>  Viewport height (default: 900)
   --help                  Show this help
@@ -83,9 +106,18 @@ async function main() {
   const propertiesArg = args["properties"] as string | undefined
   const viewportWidth = parseInt((args["viewport-width"] as string | undefined) ?? "1440", 10)
   const viewportHeight = parseInt((args["viewport-height"] as string | undefined) ?? "900", 10)
+  const interactionsArg = args["interactions"] as string | undefined
 
   if (!url) die("--url is required")
   if (!selector && !batchFile) die("either --selector or --batch is required")
+
+  type Interaction =
+    | { action: "click"; selector: string; waitFor?: string }
+    | { action: "waitFor"; selector: string }
+
+  const interactions: Interaction[] = interactionsArg
+    ? (JSON.parse(interactionsArg) as Interaction[])
+    : []
 
   const browser = await chromium.launch()
   try {
@@ -98,6 +130,18 @@ async function main() {
     }
 
     await page.goto(url!, { waitUntil: "networkidle" })
+
+    // Execute any pre-measurement interactions (e.g. click a tab, wait for content)
+    for (const interaction of interactions) {
+      if (interaction.action === "click") {
+        await page.click(interaction.selector)
+        if (interaction.waitFor) {
+          await page.waitForSelector(interaction.waitFor, { timeout: 15_000 })
+        }
+      } else if (interaction.action === "waitFor") {
+        await page.waitForSelector(interaction.selector, { timeout: 15_000 })
+      }
+    }
 
     if (batchFile) {
       // --- Batch mode ---
@@ -120,14 +164,37 @@ async function main() {
             results.push({ selector: item.selector, properties: {}, error: `Selector not found: ${item.selector}` })
             continue
           }
+          const DOM_METRICS = ["scrollWidth","clientWidth","scrollHeight","clientHeight","offsetWidth","offsetHeight","offsetTop","offsetLeft","boundingWidth","boundingHeight","boundingTop","boundingLeft","boundingRight","boundingBottom","isOverflowingX","isOverflowingY","childrenTestids"]
           const props = await el.evaluate(
-            (node, properties) => {
+            (node, [properties, domMetrics]) => {
               const computed = window.getComputedStyle(node)
-              return Object.fromEntries(
-                (properties as string[]).map((p) => [p, computed.getPropertyValue(p).trim()])
-              )
+              const rect = node.getBoundingClientRect()
+              const result: Record<string, string> = {}
+              for (const p of properties as string[]) {
+                if ((domMetrics as string[]).includes(p)) {
+                  if (p === "boundingWidth") result[p] = String(rect.width)
+                  else if (p === "boundingHeight") result[p] = String(rect.height)
+                  else if (p === "boundingTop") result[p] = String(rect.top)
+                  else if (p === "boundingLeft") result[p] = String(rect.left)
+                  else if (p === "boundingRight") result[p] = String(rect.right)
+                  else if (p === "boundingBottom") result[p] = String(rect.bottom)
+                  else if (p === "isOverflowingX") result[p] = String(node.scrollWidth > node.clientWidth)
+                  else if (p === "isOverflowingY") result[p] = String(node.scrollHeight > node.clientHeight)
+                  else if (p === "childrenTestids") {
+                    const children = Array.from(node.children).map((child, i) => {
+                      const testid = child.getAttribute("data-testid")
+                      return testid ?? `${child.tagName.toLowerCase()}:${i + 1}`
+                    })
+                    result[p] = JSON.stringify(children)
+                  }
+                  else result[p] = String((node as unknown as Record<string,number>)[p] ?? "")
+                } else {
+                  result[p] = computed.getPropertyValue(p).trim()
+                }
+              }
+              return result
             },
-            item.properties
+            [item.properties, DOM_METRICS] as [string[], string[]]
           )
           results.push({ selector: item.selector, properties: props as Record<string, string>, error: null })
         } catch (err) {
@@ -150,12 +217,34 @@ async function main() {
         .locator(selector!)
         .first()
         .evaluate(
-          (el, props) => {
+          (el, [props, domMetricsList]) => {
             const computed = window.getComputedStyle(el)
+            const rect = el.getBoundingClientRect()
             if (props) {
-              return Object.fromEntries(
-                (props as string[]).map((p) => [p, computed.getPropertyValue(p).trim()])
-              )
+              const result: Record<string, string> = {}
+              for (const p of props as string[]) {
+                if ((domMetricsList as string[]).includes(p)) {
+                  if (p === "boundingWidth") result[p] = String(rect.width)
+                  else if (p === "boundingHeight") result[p] = String(rect.height)
+                  else if (p === "boundingTop") result[p] = String(rect.top)
+                  else if (p === "boundingLeft") result[p] = String(rect.left)
+                  else if (p === "boundingRight") result[p] = String(rect.right)
+                  else if (p === "boundingBottom") result[p] = String(rect.bottom)
+                  else if (p === "isOverflowingX") result[p] = String(el.scrollWidth > el.clientWidth)
+                  else if (p === "isOverflowingY") result[p] = String(el.scrollHeight > el.clientHeight)
+                  else if (p === "childrenTestids") {
+                    const children = Array.from(el.children).map((child, i) => {
+                      const testid = child.getAttribute("data-testid")
+                      return testid ?? `${child.tagName.toLowerCase()}:${i + 1}`
+                    })
+                    result[p] = JSON.stringify(children)
+                  }
+                  else result[p] = String((el as unknown as Record<string,number>)[p] ?? "")
+                } else {
+                  result[p] = computed.getPropertyValue(p).trim()
+                }
+              }
+              return result
             }
             return Object.fromEntries(
               Array.from(computed).map((prop) => [
@@ -164,7 +253,7 @@ async function main() {
               ])
             )
           },
-          specificProperties
+          [specificProperties, Array.from(DOM_METRIC_PROPS)] as [string[] | null, string[]]
         )
 
       console.log(JSON.stringify(styles, null, 2))

@@ -216,6 +216,20 @@ Figma auto-named nodes fall into two categories:
 
 ## 12. UI State Setup (Prerequisites Block)
 
+**One coverage map = one UI state.** If a page has multiple distinct visual states (e.g. different tabs, a drawer open vs closed, a modal visible), create a separate coverage map per state. Use a descriptive suffix in the filename:
+
+```
+coverage-map-<frameId>-<state-label>.json
+# Examples:
+coverage-map-209-11957-all-tab.json
+coverage-map-209-11957-exceptions-tab.json
+coverage-map-209-11957-drawer-open.json
+```
+
+The Orchestrator processes one coverage map per invocation. To verify multiple states, run `/pixel-twin` once per state URL (they can share the same `figmaUrl` but differ in `prerequisites.url` and `setupInteractions`).
+
+This keeps each map focused and avoids the complexity of maintaining multiple `setupInteractions` sequences in a single file.
+
 The `prerequisites` block in the Coverage Map defines required page state before verification:
 - `url`: full URL including query params (ensures correct tab/filter state)
 - `auth`: auth script path

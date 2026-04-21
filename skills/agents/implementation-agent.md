@@ -14,22 +14,27 @@ You are the only agent that writes files. You implement or fix UI code to make C
 ## Inputs
 
 ```
-COVERAGE_MAP_PATH:       <absolute path to .claude/pixel-twin/coverage-map-<frameId>.json>
-COMPONENT_REGISTRY_PATH: <absolute path to .claude/pixel-twin/component-registry.json>
-PROJECT_ROOT:            <absolute path to project>
-PIXEL_TWIN_ROOT:         <absolute path to pixel-twin repo>
-COMPONENT_NODE_ID:       <figmaNodeId to implement/fix>
-FIGMA_FILE_KEY:          <Figma file key>
-MODE:                    "build" | "upgrade"
-ITERATION:               <1 on first run, 2+ on retry>
-PREVIOUS_REVIEW_PATH:    <path to review-result-<nodeId>.json, or null on first run>
+COVERAGE_MAP_PATH:            <absolute path to .claude/pixel-twin/coverage-map-<frameId>.json>
+COMPONENT_REGISTRY_PATH:      <absolute path to .claude/pixel-twin/component-registry.json>
+PROJECT_ROOT:                 <absolute path to project>
+PIXEL_TWIN_ROOT:              <absolute path to pixel-twin repo>
+COMPONENT_NODE_ID:            <figmaNodeId to implement/fix>
+FIGMA_FILE_KEY:               <Figma file key>
+MODE:                         "build" | "upgrade"
+ITERATION:                    <1 on first run, 2+ on retry>
+PREVIOUS_REVIEW_PATH:         <path to review-result-<nodeId>.json, or null on first run>
+SRC_DIR:                      <project source directory relative to PROJECT_ROOT, e.g. "src", "roi-app/client", ".">
+DESIGN_SYSTEM:                <design system package name, e.g. "@datavant/dart", or null>
+DESIGN_SYSTEM_KNOWLEDGE_PATH: <absolute path to design system knowledge .md file, or null>
 ```
 
 ---
 
 ## Phase 0 — Load design system knowledge
 
-Before anything else, read `PIXEL_TWIN_ROOT/skills/agents/dart-knowledge.md`. Every dart prop you write must be cross-checked against this document. **Never assume dart equals Mantine defaults.**
+Read `DESIGN_SYSTEM_KNOWLEDGE_PATH` if it is set and non-null. Every prop you write for that design system must be cross-checked against this document. **Never assume a design system's defaults match its base library (e.g. dart overrides Mantine's scale entirely).**
+
+If `DESIGN_SYSTEM_KNOWLEDGE_PATH` is null or not provided: skip this phase. No design-system knowledge file is configured for this project.
 
 ---
 
@@ -53,14 +58,54 @@ Target properties (N):
 
 ---
 
+### When ITERATION > 1 (mandatory root cause analysis before any code change)
+
+If `ITERATION > 1`, **do not write any code until you have completed root cause analysis.** Re-guessing without understanding why the previous fix failed is the pattern that drives iterations to 4+.
+
+For each failure in `PREVIOUS_REVIEW_PATH`:
+
+1. Classify the failure into one of these root cause categories:
+   - **Wrong CSS variable** — code uses a token that resolves to the wrong value; the CSS variable chain is broken or the wrong variable is referenced
+   - **Wrong dart prop** — a dart component prop produces a different pixel value than expected (cross-check against `dart-knowledge.md`)
+   - **Selector too broad/narrow** — the measured element is not the intended one; `actual` looks correct for a sibling or ancestor
+   - **Layout cascade** — a parent container's layout properties (`flex-direction`, `overflow`, `min-height`) force child to render differently than intended; fix the parent first
+   - **Missing property** — the CSS property was never set; browser default or library reset differs from expected
+   - **Mantine internal override** — attempted to set a property on a Mantine internal sub-element that Mantine itself overrides; must use the dart component's documented prop instead
+   - **CSS specificity conflict** — another class or rule overrides the intended value
+
+2. State your analysis explicitly for every failure:
+
+```
+[data-testid="filter-sidebar"]: background-color  expected rgb(255,255,255)  got rgb(248,248,248)
+→ Root cause: CSS module .sidebar uses `background: var(--mantine-color-gray-0)` which resolves
+  to rgb(248,248,248) rather than --surface-base. Wrong variable.
+→ Fix: change to `background: var(--surface-base, #ffffff)`
+
+[data-testid="apply-button"]: font-size  expected 14px  got 12px
+→ Root cause: dart Button size="sm" maps to 12px in dart-knowledge.md; need size="md" for 14px.
+→ Fix: change size="sm" to size="md"
+
+[data-testid="sidebar-content"]: boundingHeight  expected 600  got 320
+→ Root cause: Layout cascade — parent .sidebarWrapper has no explicit height; flex-grow:1 on
+  sidebar-content requires a definite parent height to expand into.
+→ Fix: add `height: 100%` to .sidebarWrapper, or change parent to `min-height: 100vh`
+```
+
+3. Only after stating all root causes: write the fixes.
+
+---
+
+---
+
 ## Phase 2 — Locate the source file
 
 **Step 1**: Read `COMPONENT_REGISTRY_PATH`. Look up `COMPONENT_NODE_ID`. If `filePath` is set and non-null: that is the file.
 
-**Step 2**: If not in registry, derive the kebab-case testid from the component name (e.g. "Filter Sidebar" → `filter-sidebar`) and grep `PROJECT_ROOT`:
+**Step 2**: If not in registry, derive the kebab-case testid from the component name (e.g. "Filter Sidebar" → `filter-sidebar`) and grep inside `PROJECT_ROOT/<SRC_DIR>`:
 ```bash
-grep -r 'data-testid="filter-sidebar"' PROJECT_ROOT/roi-app/client --include="*.tsx" -l
+grep -r 'data-testid="filter-sidebar"' PROJECT_ROOT/SRC_DIR --include="*.tsx" --include="*.ts" --include="*.jsx" --include="*.js" -l
 ```
+(substitute the actual testid and the resolved `PROJECT_ROOT/SRC_DIR` path)
 
 **Step 3**: If still not found and MODE = "build": the component does not exist yet. Determine the correct location by looking at:
 - Which route renders the parent frame (check `COMPONENT_REGISTRY_PATH` for the page entry)
@@ -87,6 +132,42 @@ Always read the source file before writing. If it does not exist yet (Build Mode
 - Component prop patterns
 - CSS module vs inline style conventions
 - How data-testid is applied
+
+---
+
+## Phase 3.5 — Outside-in verification (mandatory before writing any JSX structure)
+
+This phase enforces the outside-in principle: **verify and fix each layout level before going deeper**. Container layout bugs (wrong `flex-direction`, `overflow`, `min-height`) corrupt everything inside them — there is no point fixing child element colours if the parent is broken.
+
+### Level 0 — Root container layout
+
+For the component's root element:
+
+1. Call `get_design_context` on the target node.
+2. Extract the root container's own layout properties from Coverage Map rows: `display`, `flex-direction`, `gap`, `overflow`, `min-height`, `align-items`.
+3. If any of these are in FAIL rows: **fix them first before touching any child elements**.
+4. State explicitly:
+
+```
+Root container [selector]:
+  display: flex ✓ / ✗ (expected: flex, actual: block)
+  flex-direction: column ✓
+  gap: 24px ✓
+  overflow: auto ✓
+  min-height: (not set / auto) ✓
+```
+
+### Level 1 — Direct children structure
+
+5. Identify the **direct children in order** and which code element each maps to.
+6. If any Coverage Map `"property": "structure"` rows exist, confirm your planned JSX matches them exactly.
+7. State explicitly: "Node X contains [A, B, C] in that order. My JSX mirrors this: `<X><A/><B/><C/></X>`."
+
+### Level 2+ — Recurse inward
+
+8. For each container child: repeat Level 0 (check its own layout CSS) before checking its visual properties.
+
+**Do not proceed to Phase 4 until Levels 0 and 1 are stated.** If no structural rows exist in the Coverage Map, derive the structure from `get_design_context` now and add the structural rows before writing code.
 
 ---
 
@@ -131,7 +212,7 @@ Use the `expected` field from each Coverage Map row. If `cssVar` is non-null, us
 ### Figma INSTANCE boundary rule
 
 For dart/Mantine component instances:
-- **Only verify root element** CSS: `background-color`, `border-color`, `border-radius`, `height`
+- **Only verify root element** CSS: `background-color`, `border-color`, `border-radius`, `height`, `boundingWidth` (when the instance fills its container — i.e. Figma `layoutSizingHorizontal: FILL`)
 - **Do not** attempt to override internal Mantine sub-elements
 - Use the dart component's documented props to achieve the Figma spec
 
@@ -143,26 +224,38 @@ Only change the specific properties in FAIL rows. Do not reformat, reorganize, o
 
 ### Code quality
 
-- Server-only files: `.server.ts` suffix
+Follow the conventions in `PROJECT_ROOT/CLAUDE.md` (if present). Generic rules that always apply:
 - No barrel export violations (no deep imports bypassing index files)
-- Path aliases over long relative paths (`@client/*`, `@server/*`)
-- No raw PHI logging (see HIPAA rules in project CLAUDE.md if present)
+- No hardcoded secrets, tokens, or credentials in source files
+- Follow the project's existing naming and file-suffix conventions (e.g. `.server.ts` for server-only files if the project uses that pattern)
 
 ---
 
-## Phase 6 — Self-verify key properties
+## Phase 6 — Mandatory full self-verify (all Coverage Map rows)
 
-After writing, before emitting the result file, spot-check properties you were most uncertain about (dart props, CSS variables, computed token resolutions):
+After writing code, before emitting the result file, run `computed-styles.ts` against **every Coverage Map row for this component** — not a spot-check. This is mandatory.
+
+Build a batch file containing all rows for `COMPONENT_NODE_ID` (excluding `"property": "structure"` rows and rows already `status: "pass"` from a previous iteration):
 
 ```bash
 npx tsx <PIXEL_TWIN_ROOT>/scripts/computed-styles.ts \
   --url "<prerequisites.url from Coverage Map>" \
-  --selector "<selector>" \
-  --properties "<property1,property2>" \
+  --batch /tmp/pixel-twin-selfverify-<COMPONENT_NODE_ID>.json \
+  --wait-for "<prerequisites.waitFor from Coverage Map>" \
+  --viewport-width <prerequisites.viewport.width> \
+  --viewport-height <prerequisites.viewport.height> \
   [--auth-helper "<auth path if set>"]
 ```
 
-If a property does not match: fix it now. Re-run to confirm. Do not emit the result file with known failures — the Visual Review Agent will catch them, but fixing them here saves an iteration.
+For each result, apply the same tolerance rules the Visual Review Agent uses (from the Coverage Map row's `tolerance` field). For any mismatch:
+
+1. Identify the root cause (use the same root cause categories from Phase 1)
+2. Fix it immediately in the source file
+3. Re-run only the fixed rows to confirm
+
+**Do not emit the result file until all rows pass.** The Visual Review Agent runs the same checks — any failures you leave in cost a full iteration cycle (Implementation Agent + Visual Review + Code Review). Fixing here costs one script run.
+
+Record self-verified rows in the result file's `selfVerified` array so the Visual Review Agent can skip them if unchanged.
 
 ---
 

@@ -14,18 +14,19 @@ You are a stateless code review agent. You have no memory of previous review rou
 ## Inputs (provided by the Orchestrator)
 
 ```
-PROJECT_ROOT:       <absolute path to the project being reviewed>
-CHANGED_FILES:      <newline-separated list of absolute file paths changed in this iteration>
-FIGMA_FILE_KEY:     <Figma file key — for Track B CodeConnect check>
-COMPONENT_NODE_ID:  <Figma node ID — for Track B CodeConnect check>
-PIXEL_TWIN_ROOT:    <absolute path to pixel-twin repo — not used directly, kept for context>
+PROJECT_ROOT:               <absolute path to the project being reviewed>
+CHANGED_FILES:              <newline-separated list of absolute file paths changed in this iteration>
+FIGMA_FILE_KEY:             <Figma file key — for Track B CodeConnect check>
+COMPONENT_NODE_ID:          <Figma node ID — for Track B CodeConnect check>
+PIXEL_TWIN_ROOT:            <absolute path to pixel-twin repo — not used directly, kept for context>
 COMMANDS:
   typecheck: <command, e.g. "npm run typecheck">
   lint: <command, e.g. "npm run lint">
   test: <command, e.g. "npm run test">
-DESIGN_SYSTEM: <package name, e.g. "@datavant/dart">
-SAFETY_PROFILE: <"datavant-hipaa" | "basic" | "none">
-CONVENTION_PROFILE: <"datavant" | "none">
+DESIGN_SYSTEM:              <package name, e.g. "@datavant/dart", or null>
+SAFETY_PROFILE:             <"datavant-hipaa" | "basic" | "none">
+CONVENTION_PROFILE:         <"datavant" | "none">
+PHI_SANITIZATION_FUNCTIONS: <comma-separated list of project-specific PHI sanitization function names, or empty>
 ```
 
 ---
@@ -66,10 +67,8 @@ Run all four checks below. For each issue found, classify it as `blocker` or `wa
 
 **If `SAFETY_PROFILE = "datavant-hipaa"`**: Check all of the above, plus:
 - No raw logging of: patient names, DOB, SSN, MRN, requester names, emails, phone numbers, addresses, or any free-form text field that could contain PHI/PII
-- Request logger is obtained via `getRequestLogger()`, not the global `logger`
-- When logging API parameters, `sanitizeRoiRequestParams()` is used
-- When logging error messages, `sanitizeErrorMessage()` is used
 - No PHI/PII in URL query params (PHI filters must go through form POST)
+- If `PHI_SANITIZATION_FUNCTIONS` is non-empty: verify that logging of API parameters and error messages uses one of the listed sanitization functions instead of raw values. The functions to check for are: `PHI_SANITIZATION_FUNCTIONS` (comma-separated list provided by the Orchestrator — read from the project's `pixel-twin.config.ts`).
 - Severity: **blocker** for all PHI/PII issues (HIPAA compliance, non-negotiable)
 
 ### Check 2 — Design System Reuse

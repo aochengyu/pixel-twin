@@ -7,9 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-v2 full redesign in progress. See [`docs/pixel-twin-v2-design.md`](docs/pixel-twin-v2-design.md) for the approved spec.
+### Added
 
-Root causes addressed: fake orchestration, ad-hoc coverage, broken verify-fix loop, unreliable Figma→CSS mapping, no automatic triggering. v1.0.0-alpha architecture is superseded.
+- **Pre-flight interactive QA (Step 0c)** — Orchestrator now asks four clarifying questions in a single message before building the Coverage Map: UI states, authentication, dynamic data/fixtures, and component exclusions. Answers are stored in `clarification.*` and drive interactive-state row generation, auth helper resolution, and exclusion filtering in Step 3.
+- **Tip sheet for designers** — Step 0c prints best-practice guidance to minimize back-and-forth (Figma tokens vs. raw hex, per-state frames, realistic content dimensions, fixture setup).
+
+### Changed
+
+- **Step 3e — Complete mandatory property matrix** — Replaced the previous ad-hoc property list with a systematic matrix by element type. Every element type now has a mandatory minimum set: layout containers get `display`/`flex-*`/`overflow`/`padding`/`background`/`border` + `boundingWidth`/`boundingHeight`; text nodes get full typography set + `isOverflowingX`/`white-space`/`text-overflow`/`letter-spacing`; dart/Mantine instance roots get bg/border/`boundingWidth`/`boundingHeight`; SVGs get size + color/fill. Added `margin`, `align-self`, `flex-basis`, `box-shadow`, `opacity`, `position` as conditional properties.
+- **Phase 6 — Mandatory full self-verify** — Implementation Agent must now run `computed-styles.ts` against **all** Coverage Map rows for the component (not a spot-check) and fix any failures before emitting the result file.
+- **ITERATION > 1 — Mandatory root cause analysis** — Implementation Agent must classify every failure into one of 7 root cause categories (wrong CSS variable, wrong dart prop, selector mismatch, layout cascade, missing property, Mantine internal override, CSS specificity conflict) before writing any code.
+- **Step 4b — Structural row sibling order check** — Visual Review Agent now verifies sibling order via `childrenTestids` DOM metric in addition to selector existence. Order mismatch → `status: "fail"`.
+- **Visual Review Agent — Color normalization pipeline** — Added handling for `transparent`, `currentColor`, `hsl()`, `oklch()`/`lab()`/`lch()`, `rgba(..., 1)`, and hex with alpha. `currentColor` → `needs-context` (never fail). `transparent` → compare with `alpha-0.01` logic.
+- **`exact-string` tolerance key** — Added for string-typed CSS properties (display, flex-direction, overflow, white-space, text-overflow, position, etc.).
+- **`plus-minus-2px` clarification** — Applies to `boundingWidth`/`boundingHeight` for ALL significant elements, not just fill-container instances.
+- **Model upgrade** — Implementation Agent upgraded from `claude-opus-4-6` to `claude-opus-4-7`.
+- **Adopt Mode Step 2a-2** — Now explicitly references the complete property matrix from Step 3e.
+- **`computed-styles.ts`** — Added `childrenTestids` DOM metric: returns JSON-stringified array of direct children's `data-testid` values in DOM order (elements without testid appear as `tagname:position`). Available in both batch and single mode.
+- **`CLAUDE.md`** — Added "Key design decisions" section with all critical architecture decisions that survive context compaction.
+
+---
+
+## [1.0.0-alpha] - 2026-04-10
 
 ---
 
