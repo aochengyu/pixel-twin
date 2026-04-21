@@ -197,6 +197,55 @@ Apply these rules to every node in the tree:
 | Name matches `/^[0-9a-f]{16,}(\s+\d+)?$/` | **Category B** — skip entirely, including all children (third-party EHR elements) |
 | Name matches `/^(Frame\|Group\|Rectangle\|Ellipse\|Vector)\s+\d+$/` | **Category A** — skip this node's own row, but traverse its children |
 
+### 3b-dart — Identify dart/Mantine component instances (auto-detection)
+
+Before classifying nodes as layout containers or text nodes, check whether each node is a dart or Mantine component instance. This determines which property matrix applies in Step 3e and tells the Implementation Agent to use dart props instead of overriding internal CSS.
+
+**Classification rule**: a node is a dart/Mantine instance if ANY of the following match (case-insensitive, partial match allowed):
+
+**Known dart v1 components:**
+
+| Component name patterns | Notes |
+|------------------------|-------|
+| `Badge` | Formerly `Tag` in dart v0 |
+| `Button`, `ActionIcon` | All variants and sizes |
+| `Alert` | |
+| `Tabs`, `Tab`, `TabsList`, `TabsPanel` | |
+| `TextInput`, `PasswordInput`, `NumberInput` | |
+| `Select`, `MultiSelect`, `NativeSelect` | |
+| `DateInput`, `DatePicker`, `DateRangePicker` | |
+| `Checkbox`, `Radio`, `Switch`, `Toggle` | |
+| `Modal`, `Drawer`, `Overlay` | |
+| `Tooltip`, `Popover`, `HoverCard` | |
+| `Notification`, `Toast` | |
+| `Breadcrumbs`, `NavigationBreadcrumbs` | |
+| `Loader`, `Skeleton`, `Progress` | |
+| `Avatar`, `AvatarGroup` | |
+| `Menu`, `MenuItem`, `MenuDivider` | |
+| `Pagination` | |
+| `Table` | Mantine table — do NOT attempt to override `thead`/`tbody` internals |
+| `Accordion`, `AccordionItem` | |
+| `StatusTag` | Datavant custom — wraps dart Badge |
+| `SidebarFooter` | Datavant custom |
+| `Chip`, `ChipGroup` | |
+
+**How to apply:**
+
+1. For each named node returned by `get_metadata` or `get_design_context`:
+   - If the node's `name` or `componentProperties.mainComponent.name` matches any pattern above → flag it as `dartInstance: true`
+   - If the layer name contains the component name as a substring (e.g. "Status Badge / In Progress" → matches `Badge`) → flag as `dartInstance: true`
+   - If uncertain, call `get_design_context` on the node: if the returned code snippet shows a dart import (`import { X } from "@datavant/dart"`) → flag as `dartInstance: true`
+
+2. Nodes flagged `dartInstance: true`:
+   - Use the **dart/Mantine INSTANCE ROOT** property matrix in Step 3e
+   - Implementation Agent uses dart props, not CSS overrides on internals
+   - Do NOT traverse their children for Coverage Map rows — the instance root is the verification boundary
+
+3. Nodes NOT flagged as dart instances:
+   - Classify normally (layout container, text node, SVG) → apply corresponding matrix
+
+---
+
 ### 3c — Identify significant containers and assign outside-in levels
 
 From the remaining named nodes, select ~4–6 **significant containers**: nodes that have a semantic name and group a recognizable UI section. Not the root frame. Not leaf text or icons.
