@@ -97,8 +97,7 @@ The skill's defaults are calibrated for Datavant projects — this is intentiona
 
 ## V1 status (as of 2026-04-21)
 
-Core mechanics, outside-in architecture, complete property matrix, root cause analysis loop, and color normalization are implemented. Remaining before v1.0.0 stable:
-- Pre-flight interactive QA (Step 0c — ask clarifying questions before starting)
+Core mechanics, outside-in architecture, complete property matrix, root cause analysis loop, color normalization, and pre-flight interactive QA (Step 0c) are all implemented (see CHANGELOG [0.2.0]). Remaining before v1.0.0 stable:
 - CI enforcement gate
 - Real run threshold calibration (Issue #6)
 - UX polish (Issue #7)

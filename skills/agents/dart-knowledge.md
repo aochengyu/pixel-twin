@@ -299,3 +299,225 @@ When pixel-twin runs on a details page or any multi-section layout:
 4. **Level 3 last**: Colors, border widths, icon sizes
 
 The sidebar being 320px instead of 297px, using 12px gray field labels instead of 14px dark, and missing Delivery Method badge are all Level 1 failures. Fixing badge border colors (Level 3) while missing these is waste.
+
+---
+
+## Known dart v1 Components
+
+Used by pixel-twin Step 3b-dart for auto-detection. A Figma node whose name contains any of these (case-insensitive, partial match) is a dart/Mantine instance.
+
+| Name pattern | Notes |
+|---|---|
+| `Badge` | Formerly `Tag` in dart v0 |
+| `Button`, `ActionIcon` | All variants and sizes |
+| `Alert` | |
+| `Tabs`, `Tab`, `TabsList`, `TabsPanel` | |
+| `TextInput`, `PasswordInput`, `NumberInput` | |
+| `Select`, `MultiSelect`, `NativeSelect` | |
+| `DateInput`, `DatePicker`, `DateRangePicker` | |
+| `Checkbox`, `Radio`, `Switch`, `Toggle` | |
+| `Modal`, `Drawer`, `Overlay` | |
+| `Tooltip`, `Popover`, `HoverCard` | |
+| `Notification`, `Toast` | |
+| `Breadcrumbs`, `NavigationBreadcrumbs` | |
+| `Loader`, `Skeleton`, `Progress` | |
+| `Avatar`, `AvatarGroup` | |
+| `Menu`, `MenuItem`, `MenuDivider` | |
+| `Pagination` | |
+| `Table` | Mantine table — do NOT override `thead`/`tbody` internals |
+| `Accordion`, `AccordionItem` | |
+| `StatusTag` | Datavant custom — wraps dart Badge |
+| `SidebarFooter` | Datavant custom |
+| `Chip`, `ChipGroup` | |
+
+---
+
+## Form Component Wrapper Margins — Confirmed Gotcha
+
+### Gotcha 12: Mantine form components inject margin/padding on their inner wrapper even without a label
+
+Mantine form components — `Radio.Group`, `TextInput`, `Select`, `Checkbox.Group`, `Textarea`, etc. — wrap their content in an `Input.Wrapper` → inner Box structure. The inner Box (with `role="radiogroup"`, `role="combobox"`, etc.) receives margin from Mantine's InputWrapper spacing CSS, even when no `label` or `description` prop is supplied.
+
+**Observed values:**
+- `Radio.Group` inner `[role="radiogroup"]` → `margin-top: 8px; margin-bottom: 8px`
+- Other form components may vary; always measure before assuming zero.
+
+**Why it happens:** Mantine's `Input.Wrapper` CSS applies spacing to accommodate optional label/description slots. When these slots are empty, the margin remains. The outer `.mantine-InputWrapper-root` wrapper has no margin, so it is invisible in DevTools box-model until you inspect the child.
+
+**Fix pattern — anchor to the SidebarFooter container and reset globally:**
+```css
+.container :global([role="radiogroup"]) {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+```
+
+**Long-term rule: whenever pixel-twin implements any Mantine/dart form component inside a custom flex layout WITHOUT a label/description, add `[role="radiogroup"]` / inner-wrapper margin rows to the Coverage Map and override to 0 in CSS.** Do not wait for a visual diff — measure it proactively.
+
+**pixel-twin enforcement:** The Implementation Agent must, for every dart/Mantine form component used labelless, add rows:
+```json
+{ "selector": "...[role='radiogroup']", "property": "margin-top", "expected": "0px" }
+{ "selector": "...[role='radiogroup']", "property": "margin-bottom", "expected": "0px" }
+```
+to the Coverage Map. Missing these rows = invisible spacing bug.
+
+---
+
+## Coverage Map Property Matrix
+
+> Referenced from pixel-twin Step 3e. Defines the mandatory properties to extract per element type.
+
+### Classification: container vs instance
+
+A FRAME or GROUP that *wraps* dart/Mantine component instances is itself a **layout container** — extract its full layout property set. The dart/Mantine component's own root element is an **instance root** — apply instance rules only to that root. Do not misclassify wrapper divs as instance roots.
+
+---
+
+### LAYOUT CONTAINERS (any element with child nodes — FRAME, GROUP, wrapper div)
+
+**Always extract ALL of these:**
+
+| Category | Properties | Tolerance |
+|----------|-----------|-----------|
+| Display + flex | `display`, `flex-direction`, `flex-wrap`, `justify-content`, `align-items`, `align-content` | `exact-string` |
+| Spacing | `gap`, `row-gap`, `column-gap` | `plus-minus-0.5px` |
+| Overflow | `overflow`, `overflow-x`, `overflow-y` | `exact-string` |
+| Padding | `padding-top`, `padding-right`, `padding-bottom`, `padding-left` | `plus-minus-0.5px` |
+| Background | `background-color` | `exact-after-hex-rgb` |
+| Border | `border-width`, `border-style`, `border-color`, `border-radius` | `exact-px` / `exact-string` / `exact-after-hex-rgb` |
+| Bounding box | `boundingWidth`, `boundingHeight` | `plus-minus-2px` |
+
+**Add when present in Figma or inferable:**
+
+| Category | Properties | When to add |
+|----------|-----------|-------------|
+| Size constraints | `min-height`, `max-height`, `min-width`, `max-width`, `height`, `width` | Figma specifies a fixed or minimum dimension |
+| Shadow | `box-shadow` | Figma shows a drop or inner shadow |
+| Opacity | `opacity` | Figma opacity ≠ 1 |
+| Position | `position`, `z-index`, `top`, `left`, `right`, `bottom` | Figma shows absolute/relative position with offsets |
+| Margin | `margin-top`, `margin-right`, `margin-bottom`, `margin-left` | Figma shows non-zero margin |
+
+**If this container is also a flex child, additionally add:** `flex-grow`, `flex-shrink`, `flex-basis`, `align-self`
+
+---
+
+### TEXT NODES (any element with direct text content)
+
+**Always extract ALL of these:**
+
+| Properties | Tolerance |
+|-----------|-----------|
+| `font-size` | `exact-px` |
+| `font-weight` | `exact-px` |
+| `line-height` | `plus-minus-1px` |
+| `font-family` | `font-family-contains` |
+| `color` | `exact-after-hex-rgb` |
+| `text-align` | `exact-string` |
+| `letter-spacing` | `plus-minus-0.5px` |
+| `white-space` | `exact-string` |
+| `text-overflow` | `exact-string` |
+| `isOverflowingX` | `exact-string` (expected always `"false"`) |
+
+**Add when present in Figma:** `text-decoration` (underline/strikethrough), `text-transform` (uppercase/lowercase), `overflow` (text clamp)
+
+---
+
+### dart/Mantine INSTANCE ROOT (outermost DOM element of a dart or Mantine component)
+
+Verify only the root element — never attempt to override internal Mantine sub-elements via CSS.
+
+**Always extract ALL of these:**
+
+| Properties | Tolerance |
+|-----------|-----------|
+| `background-color` | `exact-after-hex-rgb` |
+| `border-color` | `exact-after-hex-rgb` |
+| `border-radius` | `exact-px` |
+| `border-width` | `exact-px` |
+| `boundingWidth` | `plus-minus-2px` |
+| `boundingHeight` | `plus-minus-2px` |
+
+**Add when applicable:** `height` (fixed height), `opacity` (≠1), `box-shadow`, `flex-grow`, `flex-shrink`, `flex-basis`, `align-self` (if flex child)
+
+---
+
+### SVG / ICON ELEMENTS
+
+| Properties | Tolerance |
+|-----------|-----------|
+| `boundingWidth` | `plus-minus-2px` |
+| `boundingHeight` | `plus-minus-2px` |
+| `color` | `exact-after-hex-rgb` (for `currentColor`-based icons) |
+| `fill` | `exact-after-hex-rgb` (if explicitly set, not `currentColor`) |
+
+#### Tabler icons — critical measurement rules
+
+Tabler icons (`@tabler/icons-react`) render as `<svg>` elements with `fill="none"` and use `stroke` to draw paths. The React `color` prop sets the CSS `color` property on the `<svg>` root, which drives `currentColor` for the stroke.
+
+**What this means for Coverage Map rows:**
+
+| Figma shows | Code prop | Measure via `getComputedStyle` | Coverage Map property |
+|---|---|---|---|
+| Fill: black / any color on a path node | `color="var(--token, #hex)"` | **`stroke`** (not `color`, not `fill`) | `"property": "stroke"` |
+| Fill: none on `<svg>` root | `fill="none"` attribute (implicit) | `fill` on `<svg>` root = `"none"` | `"property": "fill"`, `"expected": "none"` |
+
+**Why `getComputedStyle(svgRoot).color` is wrong:** CSS `color` on the SVG root is inherited from the page's body/root, NOT from the Tabler `color` prop. It reads as `rgb(0, 0, 0)` regardless of the prop value. Do NOT use `color` to verify Tabler icon color.
+
+**Correct row format for a Tabler icon:**
+```json
+{
+  "selector": "[data-testid='dropzone-area'] > svg",
+  "property": "stroke",
+  "expected": "rgb(2, 2, 2)",
+  "tolerance": "exact-after-hex-rgb",
+  "figmaValue": "#020202"
+}
+```
+
+**When Figma exports icon as an image asset (`<img src=...>`):** Use `imagePixelColor` DOM metric to sample the center pixel color via Canvas API. Add this row:
+```json
+{
+  "selector": "[data-testid='my-icon'] img",
+  "property": "imagePixelColor",
+  "expected": "rgb(0, 0, 0)",
+  "tolerance": "exact-after-hex-rgb",
+  "figmaValue": "#000000"
+}
+```
+Possible return values from `imagePixelColor`:
+- `"rgb(R, G, B)"` — success; compare with tolerance `exact-after-hex-rgb`
+- `"cross-origin"` — CORS blocks canvas read; set `status: "needs-verify"` and flag for server-side CORS config
+- `"not-an-img"` — selector hit a non-`<img>` element; fix selector
+- `"not-loaded"` — image not fully loaded; check `--wait-for` selector
+- `"canvas-unavailable"` — rare browser context issue; treat as `needs-verify`
+
+**Note**: `imagePixelColor` samples the exact center pixel. For icons where the center is transparent background (not the icon glyph), adjust the sampling point by cropping to the icon bounding box or using a selector that targets a non-transparent region.
+
+**Always call `get_design_context` on the icon's Figma node** to get the actual fill color. Never assume Tabler default colors — different icons and usage contexts specify different fills.
+
+---
+
+### Bounding-box rows — universal safety net
+
+Every significant container, every dart/Mantine instance root, every direct flex child, and every icon element gets `boundingWidth` and `boundingHeight` rows. Any layout bug (wrong flex, wrong overflow, wrong sizing) produces a bounding-box deviation that these rows catch, even when the specific CSS property wasn't anticipated.
+
+For elements where Figma shows `layoutSizingHorizontal: FILL` or code uses `w-full`:
+- Add `note: "fills parent — verify element.boundingWidth ≈ container.boundingWidth"`
+
+If the app is not yet running (Build Mode before code exists): set `expected: null` and `status: "needs-verify"`.
+
+---
+
+### Tolerance key reference
+
+| Key | When to use |
+|-----|-------------|
+| `exact-after-hex-rgb` | `color`, `background-color`, `border-color`, `fill` |
+| `alpha-0.01` | rgba alpha channel (±0.01) |
+| `exact-px` | `font-size`, `font-weight`, `border-radius`, `border-width`, `letter-spacing` |
+| `exact-string` | `display`, `flex-direction`, `flex-wrap`, `justify-content`, `align-items`, `align-content`, `align-self`, `flex-basis`, `overflow`, `overflow-x`, `overflow-y`, `white-space`, `text-overflow`, `text-align`, `text-decoration`, `text-transform`, `position`, `visibility`, `isOverflowingX`, `isOverflowingY` |
+| `plus-minus-1px` | `line-height`, `width`, `height`, `top`, `left`, `right`, `bottom` |
+| `plus-minus-2px` | `boundingWidth`, `boundingHeight` |
+| `plus-minus-0.5px` | `padding`, `gap`, `row-gap`, `column-gap`, `margin`, `letter-spacing` |
+| `box-shadow-normalized` | `box-shadow` |
+| `font-family-contains` | `font-family` |

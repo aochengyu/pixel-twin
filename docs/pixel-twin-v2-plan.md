@@ -1,5 +1,7 @@
 # pixel-twin v2 Implementation Plan
 
+**Status: COMPLETED — all tasks implemented as of 2026-04-21.**
+
 **Goal:** Rewrite pixel-twin from the v1 ad-hoc architecture to the v2 Coverage Map-based system that achieves ~100% pixel-accurate UI verification and automated fix loops.
 
 **Architecture:** Orchestrator (pixel-twin.md) builds a Coverage Map from Figma metadata, then runs sequential sub-agents per component: Implementation Agent (Opus) fixes code, Visual Review Agent (Sonnet) verifies computed styles against the Coverage Map, Code Review Agent (Haiku→Sonnet) checks code quality. All state is file-based; Orchestrator context stays O(1).
@@ -29,7 +31,7 @@
 
 Current limitation: opens a new browser per call. In v2, Visual Review Agent needs to check 20–40 selectors per component. Batch mode opens the browser once and runs all checks.
 
-- [ ] **Step 1: Replace computed-styles.ts with batch-capable version**
+- [x] **Step 1: Replace computed-styles.ts with batch-capable version**
 
 ```typescript
 #!/usr/bin/env tsx
@@ -216,7 +218,7 @@ main().catch((err: unknown) => {
 })
 ```
 
-- [ ] **Step 2: Verify batch mode works**
+- [x] **Step 2: Verify batch mode works**
 
 ```bash
 # Create a test batch file
@@ -237,7 +239,7 @@ npx tsx scripts/computed-styles.ts \
 
 Expected output: JSON array with two entries, each having `selector`, `properties` (filled), `error: null`. If selector not found: `error: "Selector not found: h1"`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 cd /Users/aocheng.yu/Documents/pixel-twin
@@ -254,7 +256,7 @@ git commit -m "feat: add batch mode to computed-styles.ts"
 
 Needed by the Coverage Map Builder to resolve Dart V1 CSS token values (the `dartV1Value` field in Coverage Map rows). Extracts `getComputedStyle(document.documentElement).getPropertyValue(varName)` from the running app.
 
-- [ ] **Step 1: Create css-variables.ts**
+- [x] **Step 1: Create css-variables.ts**
 
 ```typescript
 #!/usr/bin/env tsx
@@ -366,7 +368,7 @@ main().catch((err: unknown) => {
 })
 ```
 
-- [ ] **Step 2: Verify css-variables.ts works**
+- [x] **Step 2: Verify css-variables.ts works**
 
 ```bash
 cd /Users/aocheng.yu/Documents/pixel-twin
@@ -378,7 +380,7 @@ npx tsx scripts/css-variables.ts \
 
 Expected: JSON object with resolved rgb/hex values. Empty string `""` means the variable is not defined on `:root` (not an error — means Figma is using a hardcoded value, not a token).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add scripts/css-variables.ts
@@ -394,7 +396,7 @@ git commit -m "feat: add css-variables.ts for Dart V1 token resolution"
 
 Complete rewrite. The new Orchestrator owns Coverage Map building, mode detection, diff logic, and sequential agent dispatch. It never writes code, never reviews code — it only coordinates.
 
-- [ ] **Step 1: Replace skills/pixel-twin.md with the v2 Orchestrator**
+- [x] **Step 1: Replace skills/pixel-twin.md with the v2 Orchestrator**
 
 ```markdown
 ---
@@ -807,21 +809,21 @@ If any exist (other than the current frame's), run Visual Review Agent on each t
 - If `actual == dartV1Value` but `actual ≠ figmaValue`: status = `figma_conflict`, not `fail`
 ```
 
-- [ ] **Step 2: Verify the skill file references correct paths and covers all spec sections**
+- [x] **Step 2: Verify the skill file references correct paths and covers all spec sections**
 
 Cross-check against `docs/pixel-twin-v2-design.md` sections:
-- [ ] Section 3 (mode detection) → Step 1 ✓
-- [ ] Section 8 (Coverage Map Builder) → Step 2a–2i ✓
-- [ ] Section 11 (auto-named frames) → Step 2b ✓
-- [ ] Section 12 (prerequisites) → Step 2h ✓
-- [ ] Section 13 (tolerance rules) → Tolerance Rules Reference ✓
-- [ ] Section 14 (data-testid) → Step 2g ✓
-- [ ] Section 15 (component registry) → Step 2i ✓
-- [ ] Section 16 (upgrade mode diff) → Step 3 ✓
-- [ ] Section 17 (outside-in levels) → covered in Step 2c significant container selection ✓
-- [ ] Section 18 (regression) → Step 5 ✓
+- [x] Section 3 (mode detection) → Step 1 ✓
+- [x] Section 8 (Coverage Map Builder) → Step 2a–2i ✓
+- [x] Section 11 (auto-named frames) → Step 2b ✓
+- [x] Section 12 (prerequisites) → Step 2h ✓
+- [x] Section 13 (tolerance rules) → Tolerance Rules Reference ✓
+- [x] Section 14 (data-testid) → Step 2g ✓
+- [x] Section 15 (component registry) → Step 2i ✓
+- [x] Section 16 (upgrade mode diff) → Step 3 ✓
+- [x] Section 17 (outside-in levels) → covered in Step 2c significant container selection ✓
+- [x] Section 18 (regression) → Step 5 ✓
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add skills/pixel-twin.md
@@ -837,7 +839,7 @@ git commit -m "feat: rewrite pixel-twin.md as v2 Coverage Map orchestrator"
 
 v2 Visual Review Agent is simpler than v1: the Coverage Map already tells it exactly what to check and what the expected values are. It does not call Figma or build anything — it just runs computed-styles and writes results back.
 
-- [ ] **Step 1: Replace skills/agents/visual-review-agent.md**
+- [x] **Step 1: Replace skills/agents/visual-review-agent.md**
 
 ```markdown
 ---
@@ -998,7 +1000,7 @@ Write `PROJECT_ROOT/.claude/pixel-twin/review-result-<COMPONENT_NODE_ID>.json`:
 ```
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add skills/agents/visual-review-agent.md
@@ -1014,7 +1016,7 @@ git commit -m "feat: rewrite visual-review-agent.md for v2 Coverage Map verifica
 
 v2 Implementation Agent is given exactly what to fix (Coverage Map FAIL rows). It no longer builds its own checklist — the Coverage Map IS the checklist. In Build Mode, it creates the component; in Upgrade Mode, it fixes FAIL rows.
 
-- [ ] **Step 1: Replace skills/agents/implementation-agent.md**
+- [x] **Step 1: Replace skills/agents/implementation-agent.md**
 
 ```markdown
 ---
@@ -1181,7 +1183,7 @@ Write `PROJECT_ROOT/.claude/pixel-twin/impl-result-<COMPONENT_NODE_ID>.json`:
 ```
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add skills/agents/implementation-agent.md
@@ -1199,7 +1201,7 @@ Add Track B: verify that implementation uses correct dart components and props, 
 
 Also update inputs to accept `FIGMA_FILE_KEY` and `COMPONENT_NODE_ID`.
 
-- [ ] **Step 1: Add FIGMA inputs to the Inputs block**
+- [x] **Step 1: Add FIGMA inputs to the Inputs block**
 
 In `skills/agents/code-review-agent.md`, update the Inputs block:
 
@@ -1221,7 +1223,7 @@ CONVENTION_PROFILE: <"datavant" | "none">
 ```
 ```
 
-- [ ] **Step 2: Add Track B as a new Phase 2 check**
+- [x] **Step 2: Add Track B as a new Phase 2 check**
 
 Add this as Check 5 in the Phase 2 section:
 
@@ -1242,7 +1244,7 @@ If no CodeConnect snippets in the response: skip Track B (CodeConnect is not set
 Category: `code-connect-props`
 ```
 
-- [ ] **Step 3: Update the output JSON schema to include the new category**
+- [x] **Step 3: Update the output JSON schema to include the new category**
 
 In the `phase2.issues` output block, add `"code-connect-props"` to the category enum:
 
@@ -1250,7 +1252,7 @@ In the `phase2.issues` output block, add `"code-connect-props"` to the category 
 "category": "phi-pii-safety" | "design-system-reuse" | "convention" | "react" | "code-connect-props"
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add skills/agents/code-review-agent.md
@@ -1264,7 +1266,7 @@ git commit -m "feat: add Track B (CodeConnect props check) to code-review-agent"
 **Files:**
 - Modify: `CLAUDE.md`
 
-- [ ] **Step 1: Update doc references in CLAUDE.md**
+- [x] **Step 1: Update doc references in CLAUDE.md**
 
 In `CLAUDE.md`:
 - Replace `docs/design-spec.md` references with `docs/pixel-twin-v2-design.md`
@@ -1294,7 +1296,7 @@ Also update the Roadmap section at the bottom:
 See `docs/pixel-twin-v2-design.md` for current architecture. See GitHub issues for v3/v4 feature plans.
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add CLAUDE.md
@@ -1305,7 +1307,7 @@ git commit -m "chore: update CLAUDE.md references for v2"
 
 ## Task 8: Stage and commit design docs
 
-- [ ] **Step 1: Commit design docs and plan together**
+- [x] **Step 1: Commit design docs and plan together**
 
 ```bash
 cd /Users/aocheng.yu/Documents/pixel-twin

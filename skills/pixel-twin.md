@@ -11,6 +11,20 @@ You coordinate pixel-accurate UI implementation from Figma to browser. You build
 
 ---
 
+## ⛔ MANDATORY GATES — check before each phase transition
+
+| # | Gate | Fail consequence |
+|---|------|-----------------|
+| 1 | `coverage-map-<frameId>.json` written to disk BEFORE any `computed-styles.ts` run | Spot-checks miss issues — confirmation bias |
+| 2 | Every named text element has rows for ALL of: `font-size`, `font-weight`, `line-height`, `color`, `text-align` | Typography bugs invisible |
+| 3 | Every named sub-component got its own `get_design_context` call (not just the parent container) | Wrong values in Coverage Map rows |
+| 4 | Every `clarification.uiStates` entry has Coverage Map rows WITH `setupInteractions` populated | Interactive states never checked |
+| 5 | Every significant container + dart instance root has `boundingWidth` + `boundingHeight` rows | Layout cascade bugs invisible |
+| 6 | Every `expected` value is sourced from `get_design_context` output — NEVER from code knowledge, screenshots, or "visually looks correct" reasoning | Cognitive bias: rows pass because you wrote what the code already does, not what Figma specifies |
+| 7 | `get_screenshot` called on every significant container during Step 3d-containers Phase 1; screenshot paths stored in `prerequisites.figmaScreenshots` | Visual regressions in icon shape, SVG paths, or rendering artifacts that CSS properties cannot detect go unnoticed |
+
+---
+
 ## Dependencies (the only three you have)
 
 - **Figma MCP**: `get_metadata`, `get_design_context`
@@ -39,9 +53,23 @@ Call `get_metadata` with just the file key to list top-level frames. Print them 
 
 ---
 
+## ⚡ FIRST OUTPUT — Print before any tool call
+
+The absolute first thing you do — before reading config, before checking the server, before everything:
+
+```
+[pixel-twin] Starting — parsing Figma URL
+```
+
+Then proceed immediately to Step 0a. Print progress at each sub-step so the user always knows what is happening.
+
+---
+
 ## Step 0 — Load config and check dev server
 
 ### 0a — Read project config
+
+Print: `[pixel-twin] Reading config...`
 
 Read `PROJECT_ROOT/.claude/pixel-twin.config.ts` and extract all fields. If the file does not exist, use these defaults:
 
@@ -64,53 +92,35 @@ Store these values — every subsequent step that passes config to a sub-agent r
 
 ### 0b — Check dev server
 
+Print: `[pixel-twin] Checking dev server at http://localhost:<port>...`
+
 Send a GET to `http://localhost:<config.port>`.
 
-- 200 → already running, proceed
+- 200 → print `[pixel-twin] Dev server OK` and proceed
 - Connection refused → print: `"Dev server is not running. Start it (e.g. \`npm run dev\`) then try again."` and stop.
 
 ### 0c — Pre-flight clarification
 
-Ask the user all four questions in a **single message**. Do not ask them one by one. Do not proceed to Step 1 until answers are received.
+**⛔ STOP HERE. Do NOT proceed to Step 0d until the user has replied.** Ask all four in one message:
 
-**Questions to ask:**
+1. **UI states** — interactive states needing separate measurement? list + how to trigger each
+2. **Auth** — login required? auth helper in `.claude/pixel-twin.config.ts`? which file?
+3. **Dynamic data** — data-dependent rendering? MSW/fixture to use? deterministic state?
+4. **Exclusions** — components to skip? (third-party, animated, random-value elements)
 
-> Before I start building the Coverage Map, I need four quick answers:
->
-> 1. **UI states** — Does this component have interactive states that need separate measurement? (e.g. hover, active, tab selected, modal open, error state, empty vs. filled). If yes, list them and describe the interaction that triggers each (e.g. "click the Exceptions tab").
->
-> 2. **Authentication** — Does reaching this page require login? If yes: is there already an `auth` helper configured in `.claude/pixel-twin.config.ts`? If not, what file should I use?
->
-> 3. **Dynamic data** — Does this component render differently based on data (e.g. 0 rows vs. many, loading state vs. loaded)? If yes: is there an MSW handler or fixture that provides deterministic data? What state should be active during verification?
->
-> 4. **Exclusions** — Are there components in this frame that should be skipped? (e.g. third-party embeds, animated loaders, elements with random/time-dependent values). List their Figma layer names or `data-testid` values.
->
-> **Tips for a faster pixel-twin run:**
-> - Use Figma tokens (not raw hex) — pixel-twin detects Dart token mismatches only when the token is in Figma
-> - Represent each interactive state as a separate Figma frame if possible
-> - Use realistic content dimensions in the Figma frame (real text lengths, not lorem ipsum placeholders)
-> - If a component has a loading state, tell me what fixture makes it always render "loaded"
+Record: `clarification.{uiStates, authRequired, fixtureNote, exclusions}`. Use throughout: Step 3 row generation, Coverage Map `prerequisites.setupInteractions`, and agent auth path.
 
-After receiving answers, record:
-- `clarification.uiStates`: list of `{ name, setupInteractions: [{ action, selector, waitFor? }] }` — empty list if none
-- `clarification.authRequired`: true/false; if true, the resolved auth helper path
-- `clarification.fixtureNote`: free-text description of fixture/MSW setup, or null
-- `clarification.exclusions`: list of Figma layer names or testid patterns to skip during Step 3 node traversal
+### 0d — Regression check
 
-Use these throughout:
-- **Step 3**: each entry in `clarification.uiStates` → add corresponding `"verificationMethod": "interactive"` rows with the state's `setupInteractions`; skip Figma nodes matching `clarification.exclusions`
-- **Coverage Map `prerequisites`**: populate `setupInteractions` from `clarification.uiStates`; add `fixtureNote` as a comment-style field for human reference
-- **All agents**: pass auth helper path if `clarification.authRequired` is true
+Print: `[pixel-twin] Checking for regressions in existing Coverage Maps...`
 
----
-
-## Step 1 — Regression check
-
-Before any new work, check for existing Coverage Maps:
+Scan for existing Coverage Maps:
 
 ```
 PROJECT_ROOT/.claude/pixel-twin/coverage-map-*.json
 ```
+
+If none exist: print `[pixel-twin] No existing Coverage Maps — skipping regression check.` and proceed.
 
 If any exist (for frames other than the current one), spawn a Visual Review Agent on each to confirm no regressions:
 
@@ -121,9 +131,9 @@ PIXEL_TWIN_ROOT: <absolute path>
 COMPONENT_NODE_ID: "*"   ← special value: check ALL rows in the map
 ```
 
-If failures found — fix them first via an Implementation Agent cycle, then proceed.
+Print: `[pixel-twin] Regression check: <N> map(s) to verify...`
 
-If no existing Coverage Maps: skip this step.
+If failures found — fix them first via an Implementation Agent cycle, then proceed.
 
 ---
 
@@ -140,45 +150,14 @@ Check whether `PROJECT_ROOT/.claude/pixel-twin/coverage-map-<frameId>.json` exis
 
 ## Step 2a — Adopt Mode: baseline from current DOM
 
-Use when the frame already has implemented, correct code and you only need to create a regression-prevention coverage map. Skips Figma API, skips Implementation Agent. Cost: ~1 script run.
+Skips Figma API and Implementation Agent. Use when existing code is correct and you only need regression prevention.
 
-### 2a-1 — Identify selectors
+1. **Identify selectors** — grep `data-testid` in the component directory or read `COMPONENT_REGISTRY_PATH`
+2. **Measure current DOM** — run `computed-styles.ts --batch` with the mandatory property set per element type (see dart-knowledge.md Coverage Map Property Matrix)
+3. **Write map** — use measured values as `expected`, `status: "pass"`, `figmaValue: null`
+4. **Verify** — run Visual Review Agent; if failures, fix selectors/properties first
 
-From `COMPONENT_REGISTRY_PATH` or by grepping `data-testid` attributes in the component directory, list the meaningful selectors for this frame.
-
-### 2a-2 — Measure current DOM
-
-For each selector, determine its element type (layout container, text node, dart/Mantine instance, SVG/icon) and measure the **complete mandatory property set** from Step 3e's property extraction matrix. Use the same property lists that Build Mode would extract — this guarantees the baseline catches the same classes of bugs.
-
-Use batch mode for efficiency:
-
-```bash
-npx tsx <PIXEL_TWIN_ROOT>/scripts/computed-styles.ts \
-  --url "<app URL>" \
-  --batch <batch-file.json> \
-  --auth-helper "<auth path if set>" \
-  --wait-for "<waitFor selector>"
-```
-
-**Minimum properties per element type (from Step 3e):**
-- Layout container: `display`, `flex-direction`, `flex-wrap`, `justify-content`, `align-items`, `gap`, `overflow`, `padding-*`, `background-color`, `border-*`, `boundingWidth`, `boundingHeight`
-- Text node: `font-size`, `font-weight`, `line-height`, `font-family`, `color`, `text-align`, `letter-spacing`, `white-space`, `text-overflow`, `isOverflowingX`
-- dart/Mantine instance root: `background-color`, `border-*`, `boundingWidth`, `boundingHeight`
-- SVG/icon: `boundingWidth`, `boundingHeight`, `color`
-
-### 2a-3 — Write coverage map
-
-Write `coverage-map-<frameId>.json` using the measured values as `expected`. Set `status: "pass"` and `actual` = measured value. Set `figmaValue: null` (Figma not consulted — this is a DOM baseline, not a Figma match). Set `lastVerified` to today.
-
-**Important**: Adopt Mode coverage maps catch regressions from the current baseline, NOT Figma drift. If you later want Figma-match verification, run Build Mode or Upgrade Mode.
-
-### 2a-4 — Verify
-
-Run Visual Review Agent to confirm all rows pass with the current code. If any fail, the selectors or properties are wrong — fix them before writing the map.
-
-Print: `[pixel-twin] Adopt Mode complete — <N> rows for <frameId>. Baseline locked.`
-
-Then go to Step 6.
+Print: `[pixel-twin] Adopt Mode complete — <N> rows for <frameId>. Baseline locked.` → go to Step 6.
 
 ---
 
@@ -199,50 +178,16 @@ Apply these rules to every node in the tree:
 
 ### 3b-dart — Identify dart/Mantine component instances (auto-detection)
 
-Before classifying nodes as layout containers or text nodes, check whether each node is a dart or Mantine component instance. This determines which property matrix applies in Step 3e and tells the Implementation Agent to use dart props instead of overriding internal CSS.
+A node is a dart/Mantine instance if its name (or `componentProperties.mainComponent.name`) matches a known component name (case-insensitive, partial match). See `PIXEL_TWIN_ROOT/skills/agents/dart-knowledge.md` section **Known dart v1 Components** for the full name list.
 
-**Classification rule**: a node is a dart/Mantine instance if ANY of the following match (case-insensitive, partial match allowed):
+If uncertain: call `get_design_context` on the node — if the snippet shows `import { X } from "@datavant/dart"` → it's a dart instance.
 
-**Known dart v1 components:**
+**For dart instances:**
+- Use the **dart/Mantine INSTANCE ROOT** property matrix (see dart-knowledge.md)
+- Implementation Agent uses dart props, not CSS overrides on internals
+- Do NOT traverse children — instance root is the verification boundary
 
-| Component name patterns | Notes |
-|------------------------|-------|
-| `Badge` | Formerly `Tag` in dart v0 |
-| `Button`, `ActionIcon` | All variants and sizes |
-| `Alert` | |
-| `Tabs`, `Tab`, `TabsList`, `TabsPanel` | |
-| `TextInput`, `PasswordInput`, `NumberInput` | |
-| `Select`, `MultiSelect`, `NativeSelect` | |
-| `DateInput`, `DatePicker`, `DateRangePicker` | |
-| `Checkbox`, `Radio`, `Switch`, `Toggle` | |
-| `Modal`, `Drawer`, `Overlay` | |
-| `Tooltip`, `Popover`, `HoverCard` | |
-| `Notification`, `Toast` | |
-| `Breadcrumbs`, `NavigationBreadcrumbs` | |
-| `Loader`, `Skeleton`, `Progress` | |
-| `Avatar`, `AvatarGroup` | |
-| `Menu`, `MenuItem`, `MenuDivider` | |
-| `Pagination` | |
-| `Table` | Mantine table — do NOT attempt to override `thead`/`tbody` internals |
-| `Accordion`, `AccordionItem` | |
-| `StatusTag` | Datavant custom — wraps dart Badge |
-| `SidebarFooter` | Datavant custom |
-| `Chip`, `ChipGroup` | |
-
-**How to apply:**
-
-1. For each named node returned by `get_metadata` or `get_design_context`:
-   - If the node's `name` or `componentProperties.mainComponent.name` matches any pattern above → flag it as `dartInstance: true`
-   - If the layer name contains the component name as a substring (e.g. "Status Badge / In Progress" → matches `Badge`) → flag as `dartInstance: true`
-   - If uncertain, call `get_design_context` on the node: if the returned code snippet shows a dart import (`import { X } from "@datavant/dart"`) → flag as `dartInstance: true`
-
-2. Nodes flagged `dartInstance: true`:
-   - Use the **dart/Mantine INSTANCE ROOT** property matrix in Step 3e
-   - Implementation Agent uses dart props, not CSS overrides on internals
-   - Do NOT traverse their children for Coverage Map rows — the instance root is the verification boundary
-
-3. Nodes NOT flagged as dart instances:
-   - Classify normally (layout container, text node, SVG) → apply corresponding matrix
+**For non-instances:** classify normally (layout container, text node, SVG)
 
 ---
 
@@ -274,11 +219,7 @@ The queue must be ordered by level. Level 0 is processed and must fully pass bef
 
 2. **For each container child**: extract its direct children the same way.
 
-3. **Map every Figma node to its code equivalent** before writing any code:
-
-| Figma node name | nodeId | Expected code element / selector |
-|----------------|--------|----------------------------------|
-| (fill in for each node) | | |
+3. **Map every Figma node to its code equivalent** before writing any code (table: Figma name | nodeId | selector).
 
 4. **Write structural entries in the Coverage Map** `rows` array — one row per containment relationship that matters:
 
@@ -297,9 +238,52 @@ The queue must be ordered by level. Level 0 is processed and must fully pass bef
 
 **Do not proceed to Step 3d-container (significant containers) until this structural map is complete.** If any containment relationship is ambiguous, call `get_design_context` on the ambiguous node to clarify before implementing.
 
-### 3d-containers — Call get_design_context on significant containers
+### 3d-containers — Figma data collection phase (MANDATORY — complete before writing any rows)
+
+**⛔ This is a two-phase step. Phase 1 collects ALL Figma data. Phase 2 writes rows. NEVER interleave them.**
+
+#### Phase 1 — Collect Figma data
 
 Call `get_design_context` on each significant container (`nodeId` + `fileKey`).
+
+**Sub-component drilling (mandatory — this is Gate 3):**
+After receiving the `get_design_context` response for a container, examine its children. For every child node that is:
+- A text node with a non-auto name (any node whose Figma layer name is not "Text", "Label", "Frame N", etc.)
+- An interactive element (Radio, Checkbox, Button variant, input field)
+- A named child container with semantic meaning (Dropzone, File Upload Area, Warning Banner)
+
+Call `get_design_context` on that child's **specific nodeId**. Do not skip any named child.
+
+**Also capture Figma screenshots during Phase 1:** For each significant container's `nodeId`, call `get_screenshot` (Figma MCP) and save the result to:
+```
+PROJECT_ROOT/.claude/pixel-twin/screenshots/figma-<nodeId>.png
+```
+Store the screenshot's `width` and `height` in `figmaScreenshotMeta` inside the temp file (below).
+
+**Write all collected responses to a temp file — do not write Coverage Map rows yet:**
+
+```
+PROJECT_ROOT/.claude/pixel-twin/figma-data-<frameId>.json
+```
+
+Structure:
+```json
+{
+  "<nodeId>": {
+    "figmaName": "<layer name>",
+    "designContextResponse": "<full get_design_context response>",
+    "screenshotPath": ".claude/pixel-twin/screenshots/figma-<nodeId>.png",
+    "screenshotWidth": 320,
+    "screenshotHeight": 480
+  }
+}
+```
+
+**Gate 6 enforcement:** You may NOT write `expected` values to Coverage Map rows until `figma-data-<frameId>.json` is written and contains an entry for every significant container and its named children. If you do not have a `get_design_context` response for a node, set `expected: null` and `status: "needs-verify"`.
+
+#### Phase 2 — Write Coverage Map rows
+
+Only after `figma-data-<frameId>.json` is complete, read it back and use its data as the ONLY source for `expected` values. For each row, set `"figmaSource": "get_design_context nodeId <id>"` to document which Figma call supplied the value.
 
 ### 3e — Value Extractor
 
@@ -309,120 +293,31 @@ For each CSS property:
 1. `var(--token, fallback)` → record `figmaValue = fallback`, `cssVar = --token`
 2. Raw hex/px (no token) → record `figmaValue = value`, `cssVar = null`
 
-Properties to extract by element type — **outside-in order: container layout first, then visual, then children.**
-
-Every element type has a **mandatory base set** — extract these regardless of whether Figma explicitly shows the value. Absent Figma values still affect rendering via browser defaults and library resets.
+Extract properties **outside-in: container layout first, then visual, then children.**
 
 **Why layout-first**: layout property bugs (wrong `flex-direction`, `min-height: 100%`, `overflow: hidden`) corrupt entire subtrees. Container layout must be verified before checking child properties.
 
----
+**Property extraction tables by element type** — see `PIXEL_TWIN_ROOT/skills/agents/dart-knowledge.md`, section **Coverage Map Property Matrix**. That section defines the mandatory base set for LAYOUT CONTAINERS, TEXT NODES, dart/Mantine INSTANCE ROOT, and SVG/ICON ELEMENTS, plus tolerance keys and bounding-box rules.
 
-#### LAYOUT CONTAINERS (any element with child nodes — FRAME, GROUP, wrapper div)
+Every element type has a mandatory base set — extract these regardless of whether Figma explicitly shows the value. Absent Figma values still affect rendering via browser defaults and library resets.
 
-**Mandatory — always extract ALL of these:**
+**⛔ GATE 6 enforcement — mandatory for every Coverage Map row:**
 
-| Category | Properties | Tolerance |
-|----------|-----------|-----------|
-| Display + flex | `display`, `flex-direction`, `flex-wrap`, `justify-content`, `align-items`, `align-content` | `exact-string` |
-| Spacing | `gap`, `row-gap`, `column-gap` | `plus-minus-0.5px` |
-| Overflow | `overflow`, `overflow-x`, `overflow-y` | `exact-string` |
-| Padding | `padding-top`, `padding-right`, `padding-bottom`, `padding-left` | `plus-minus-0.5px` |
-| Background | `background-color` | `exact-after-hex-rgb` |
-| Border | `border-width`, `border-style`, `border-color`, `border-radius` | `exact-px` / `exact-string` / `exact-after-hex-rgb` |
-| Bounding box | `boundingWidth`, `boundingHeight` | `plus-minus-2px` |
+Before writing any row's `expected` value, you MUST have called `get_design_context` on that node (or its nearest named ancestor). The `expected` value MUST come from the `get_design_context` response — either the CSS value in the returned code snippet, or the computed fallback from a `var(--token, fallback)` pattern.
 
-**Add when present in Figma or inferable from design:**
+**NEVER write `expected` from:**
+- Code you've already written ("the code sets `color: #020202`, so expected is `#020202`")
+- Screenshots or DevTools readings
+- Token names alone without resolving the value (e.g. writing `expected: "--text-on-base-default"` without the resolved hex)
+- "It looks correct visually"
+- Tabler icon default stroke colors (always call `get_design_context` on the icon node first)
 
-| Category | Properties | When to add |
-|----------|-----------|-------------|
-| Size constraints | `min-height`, `max-height`, `min-width`, `max-width`, `height`, `width` | Figma specifies a fixed or minimum dimension |
-| Shadow | `box-shadow` | Figma shows a drop or inner shadow |
-| Opacity | `opacity` | Figma opacity ≠ 1 (100%) |
-| Position | `position`, `z-index`, `top`, `left`, `right`, `bottom` | Figma shows absolute/relative position with offsets |
-| Margin | `margin-top`, `margin-right`, `margin-bottom`, `margin-left` | Figma shows non-zero margin or spacing-before |
+**For each row you write, record the source in a `figmaSource` annotation** (this field is informational and not checked by VRA):
+- `"figmaSource": "get_design_context nodeId 40:12458"` — direct Figma call
+- `"figmaSource": "inferred from parent container 40:12390"` — derived from parent (acceptable only for structural/layout rows with no matching leaf node)
+- `"figmaSource": "dartV1Value resolved from CSS variable"` — for rows where `cssVar` is non-null and `dartV1Value` was set from `css-variables.ts`
 
-**If this container is also a flex child (its parent is a flex container), additionally add:**
-
-| Properties | Tolerance |
-|-----------|-----------|
-| `flex-grow`, `flex-shrink`, `flex-basis`, `align-self` | `exact-string` or `exact-px` as appropriate |
-
----
-
-#### TEXT NODES (any element with direct text content — labels, headings, body text)
-
-**Mandatory:**
-
-| Properties | Tolerance |
-|-----------|-----------|
-| `font-size` | `exact-px` |
-| `font-weight` | `exact-px` |
-| `line-height` | `plus-minus-1px` |
-| `font-family` | `font-family-contains` |
-| `color` | `exact-after-hex-rgb` |
-| `text-align` | `exact-string` |
-| `letter-spacing` | `plus-minus-0.5px` |
-| `white-space` | `exact-string` |
-| `text-overflow` | `exact-string` |
-| `isOverflowingX` | `exact-string` (expected always `"false"`) |
-
-**Add when present in Figma:**
-
-| Properties | When |
-|-----------|------|
-| `text-decoration` | Figma shows underline or strikethrough |
-| `text-transform` | Figma shows uppercase/lowercase/capitalize |
-| `overflow` | Text node itself has an overflow constraint |
-
----
-
-#### dart/Mantine INSTANCE ROOT (outermost DOM element of a dart or Mantine component)
-
-*Verify only the root element — never attempt to override internal Mantine sub-elements via CSS.*
-
-**Mandatory:**
-
-| Properties | Tolerance |
-|-----------|-----------|
-| `background-color` | `exact-after-hex-rgb` |
-| `border-color` | `exact-after-hex-rgb` |
-| `border-radius` | `exact-px` |
-| `border-width` | `exact-px` |
-| `boundingWidth` | `plus-minus-2px` |
-| `boundingHeight` | `plus-minus-2px` |
-
-**Add when applicable:**
-
-| Properties | When |
-|-----------|------|
-| `height` | Figma specifies fixed height |
-| `opacity` | Figma opacity ≠ 1 |
-| `box-shadow` | Figma shows a shadow |
-| `flex-grow`, `flex-shrink`, `flex-basis`, `align-self` | This instance is a flex child |
-
----
-
-#### SVG / ICON ELEMENTS (any `<svg>`, icon wrapper, or `<img>` used as icon)
-
-| Properties | Tolerance |
-|-----------|-----------|
-| `boundingWidth` | `plus-minus-2px` |
-| `boundingHeight` | `plus-minus-2px` |
-| `color` | `exact-after-hex-rgb` (for `currentColor`-based icons) |
-| `fill` | `exact-after-hex-rgb` (if explicitly set, not `currentColor`) |
-
----
-
-> **Classification rule — container vs instance**: A FRAME or GROUP that *wraps* dart/Mantine component instances is itself a **layout container** — always extract its full layout property set. The dart/Mantine component's own root element is an **instance root** — apply instance rules only to that root, not to any wrapper div. Do not misclassify wrapper divs as instance roots.
-
-**Bounding-box rows (mandatory for ALL element types):**
-
-Every significant container, every dart/Mantine instance root, every direct flex child, and every icon element gets `boundingWidth` and `boundingHeight` rows. This is the universal safety net: any layout bug — wrong flex, wrong overflow, wrong sizing, wrong min-height interaction — produces a bounding-box deviation that these rows will catch, even when the specific CSS property wasn't anticipated.
-
-For elements where Figma shows `layoutSizingHorizontal: FILL` or code uses `w-full`/`flex-[1_0_0]`:
-- Add `note: "fills parent — verify element.boundingWidth ≈ container.boundingWidth"`
-
-If the app is not yet running (Build Mode before any code exists), set `expected: null` and `status: "needs-verify"`. Populate on first Visual Review Agent pass.
+If you cannot call `get_design_context` (no network, tool error): set `expected: null` and `status: "needs-verify"`. DO NOT guess.
 
 ### 3f — CSS Variable Extraction
 
@@ -457,105 +352,27 @@ If data-testid does not yet exist (Build Mode), record the intended testid value
 
 ### 3h — Write Coverage Map
 
-Create `PROJECT_ROOT/.claude/pixel-twin/coverage-map-<frameId>.json`:
+Write `PROJECT_ROOT/.claude/pixel-twin/coverage-map-<frameId>.json`. Required top-level fields: `frameId`, `figmaUrl`, `lastVerified: null`, `figmaDiscrepancies: []`, and a `prerequisites` block with: `url` (inferred app URL), `auth` (auth helper path or null), `waitFor` (e.g. `"tbody tr"` if table visible, or key selector), `viewport` (from Figma frame dimensions), `stableCondition: "networkidle"`, `setupInteractions: []`, `figmaScreenshots` (map of `nodeId → { path, width, height }` from Phase 1 of Step 3d-containers).
 
-```json
-{
-  "frameId": "<frameId>",
-  "figmaUrl": "<original figma_url>",
-  "lastVerified": null,
-  "prerequisites": {
-    "url": "<inferred app URL>",
-    "auth": "<path to auth helper, or null>",
-    "waitFor": "<inferred — e.g. 'tbody tr' if table rows visible>",
-    "viewport": { "width": <frame width>, "height": <frame height> },
-    "stableCondition": "networkidle",
-    "setupInteractions": []
-  },
-  "rows": [
-    {
-      "selector": "<CSS selector>",
-      "figmaNodeId": "<nodeId of the Figma layer>",
-      "property": "<css-property>",
-      "figmaValue": "<value from Figma>",
-      "dartV1Value": "<resolved token value, or same as figmaValue if no token>",
-      "cssVar": "<--token-name or null>",
-      "figmaConflict": false,
-      "expected": "<dartV1Value>",
-      "actual": null,
-      "status": "pending",
-      "tolerance": "<tolerance-key>"
-    }
-  ],
-  "figmaDiscrepancies": []
-}
-```
+Each row: `{ selector, figmaNodeId, property, figmaValue, dartV1Value, cssVar, figmaConflict: false, expected, actual: null, status: "pending", tolerance }`.
 
-**Prerequisites auto-inference:**
-- Table rows visible in Figma frame → `waitFor: "tbody tr"`
-- Frame dimensions → `viewport`
-- Sidebar visible → note in `setupInteractions`: auto-inferred as open by default
-- Any field you cannot infer → leave `null` and print: `"⚠️ prerequisites.<field> is null — fill before running verification"`
+If any prerequisite cannot be inferred, leave `null` and stop: `"⚠️ prerequisites.<field> is null — fill before running verification"`.
 
-Pause if any prerequisite field is null. Ask the engineer to supply the value before continuing.
+Tolerance keys are in dart-knowledge.md → **Coverage Map Property Matrix → Tolerance key reference**.
 
-**Tolerance key reference:**
+**Completeness self-check (mandatory before Step 5) — check all 4 Gates:**
 
-| Key | When to use |
-|-----|-------------|
-| `exact-after-hex-rgb` | `color`, `background-color`, `border-color`, `fill` |
-| `alpha-0.01` | rgba alpha channel (±0.01) |
-| `exact-px` | `font-size`, `font-weight`, `border-radius`, `border-width`, `letter-spacing` |
-| `exact-string` | `display`, `flex-direction`, `flex-wrap`, `justify-content`, `align-items`, `align-content`, `align-self`, `flex-basis`, `overflow`, `overflow-x`, `overflow-y`, `white-space`, `text-overflow`, `text-align`, `text-decoration`, `text-transform`, `position`, `visibility`, `isOverflowingX`, `isOverflowingY` — exact case-insensitive string match |
-| `plus-minus-1px` | `line-height`, `width`, `height`, `top`, `left`, `right`, `bottom` |
-| `plus-minus-2px` | `boundingWidth`, `boundingHeight` — rendered dimensions for all significant elements |
-| `plus-minus-0.5px` | `padding`, `gap`, `row-gap`, `column-gap`, `margin`, `letter-spacing` |
-| `box-shadow-normalized` | `box-shadow` |
-| `font-family-contains` | `font-family` |
+Run the Gate checks (Gates 2–5). Print `[pixel-twin] Coverage Map self-check: text N/M, bbox N/M, states N/M, sub-components N/M`. Fix any ratio that is not N/N before proceeding.
 
-### 3i — Initialize component registry
+### 3i — Initialize state files
 
-Create `PROJECT_ROOT/.claude/pixel-twin/component-registry.json`:
+Create `component-registry.json`: `{ "<nodeId>": { figmaName, type: "component"|"page", filePath: null, parentFrame } }`. Leave `filePath` null — Implementation Agent fills it in.
 
-```json
-{
-  "<nodeId>": {
-    "figmaName": "<Figma layer name>",
-    "type": "page",
-    "filePath": "<inferred route file, e.g. app/routes/list.tsx, or null>",
-    "parentFrame": null
-  }
-}
-```
+Create `queue-<frameId>.json`: `{ frameId, mode: "build", currentLevel: 0, pendingComponents: [{ nodeId, figmaName, reason: "new", level }], completedComponents: [] }`. Sort `pendingComponents` by `level` ascending.
 
-Add entries for each significant container with `type: "component"` and `parentFrame: "<frameId>"`. Leave `filePath` null if unknown — Implementation Agent will fill it in.
+Create `reports/` directory.
 
-Print summary:
-```
-[pixel-twin] Coverage Map built — <N> rows across <M> components
-[pixel-twin] Components queued: <list>
-```
-
-Create `PROJECT_ROOT/.claude/pixel-twin/queue-<frameId>.json`:
-
-```json
-{
-  "frameId": "<frameId>",
-  "mode": "build",
-  "currentLevel": 0,
-  "pendingComponents": [
-    { "nodeId": "<level-0 nodeId>", "figmaName": "<name>", "reason": "new", "level": 0 },
-    { "nodeId": "<level-1 nodeId>", "figmaName": "<name>", "reason": "new", "level": 1 },
-    { "nodeId": "<level-2 nodeId>", "figmaName": "<name>", "reason": "new", "level": 2 }
-  ],
-  "completedComponents": []
-}
-```
-
-Entries are sorted by `level` ascending. `currentLevel` starts at 0 and advances only after all components at that level reach `status: "pass"` in the Coverage Map.
-
-Also create the reports directory if it does not exist:
-`PROJECT_ROOT/.claude/pixel-twin/reports/`
+Print: `[pixel-twin] Coverage Map built — <N> rows across <M> components. Queued: <list>`
 
 Then go to Step 5.
 
@@ -592,20 +409,7 @@ Wait for engineer confirmation before proceeding.
 
 ### 4d — Write queue
 
-Create `PROJECT_ROOT/.claude/pixel-twin/queue-<frameId>.json`:
-
-```json
-{
-  "frameId": "<frameId>",
-  "mode": "upgrade",
-  "pendingComponents": [
-    { "nodeId": "<id>", "figmaName": "<name>", "reason": "changed|new|moved" }
-  ],
-  "completedComponents": []
-}
-```
-
-Then go to Step 5.
+Write `queue-<frameId>.json`: `{ frameId, mode: "upgrade", pendingComponents: [{ nodeId, figmaName, reason: "changed"|"new"|"moved" }], completedComponents: [] }`. Then go to Step 5.
 
 ---
 
@@ -613,21 +417,17 @@ Then go to Step 5.
 
 Read the queue file. Process components **strictly by level** — never start a component at level N+1 until every component at level N has `status: "pass"` in the Coverage Map.
 
-**Level gate logic:**
-1. Filter `pendingComponents` to only those with `level == currentLevel`.
-2. Process them sequentially (one at a time, not in parallel).
-3. After all components at `currentLevel` pass: increment `currentLevel` in the queue file, then repeat.
-4. If any component at `currentLevel` is STUCK (iteration 5, no resolution): print the stuck message, wait for engineer input before incrementing the level. **Do not proceed deeper into a broken layout.**
-
-This enforces the outside-in principle at the orchestrator level: page shell correctness is guaranteed before sections are checked; section correctness is guaranteed before components are checked.
+Filter `pendingComponents` to `level == currentLevel`, run sequentially, only increment level after all pass. STUCK at iteration 5 → wait for engineer before advancing. Never start deeper levels on a broken foundation.
 
 For each component (`nodeId`, `figmaName`), run one iteration cycle:
 
-### 5a — Spawn Implementation Agent
+### 5a — Gate check
 
-Read `PIXEL_TWIN_ROOT/skills/agents/implementation-agent.md`. Spawn an Agent with:
-- **model**: `claude-opus-4-7`
-- **prompt**: the full content of `implementation-agent.md` + the inputs block below
+Confirm `coverage-map-<frameId>.json` exists, has non-zero rows, and self-check from Step 3h passed. If missing: return to Step 3. Never implement without a Coverage Map.
+
+**Agent spawn pattern** (applies to 5a-impl, 5b, 5c): Read the agent md file → `Agent(model: X, prompt: file content + inputs block)`.
+
+### 5a-impl — Implementation Agent (`claude-opus-4-7`, file: `implementation-agent.md`)
 
 ```
 COVERAGE_MAP_PATH:            PROJECT_ROOT/.claude/pixel-twin/coverage-map-<frameId>.json
@@ -648,11 +448,7 @@ Print: `[pixel-twin] [N/TOTAL] <figmaName> — implementing... (iter <I>)`
 
 Wait for agent. Check that `PROJECT_ROOT/.claude/pixel-twin/impl-result-<nodeId>.json` exists.
 
-### 5b — Spawn Visual Review Agent
-
-Read `PIXEL_TWIN_ROOT/skills/agents/visual-review-agent.md`. Spawn an Agent with:
-- **model**: `claude-sonnet-4-6`
-- **prompt**: full content of `visual-review-agent.md` + inputs:
+### 5b — Visual Review Agent (`claude-sonnet-4-6`, file: `visual-review-agent.md`)
 
 ```
 COVERAGE_MAP_PATH:  PROJECT_ROOT/.claude/pixel-twin/coverage-map-<frameId>.json
@@ -666,11 +462,7 @@ Print: `[pixel-twin] [N/TOTAL] <figmaName> — verifying...`
 
 Wait for agent. Read `PROJECT_ROOT/.claude/pixel-twin/review-result-<nodeId>.json`.
 
-### 5c — Spawn Code Review Agent
-
-Read `PIXEL_TWIN_ROOT/skills/agents/code-review-agent.md`. Spawn an Agent with:
-- **model**: `claude-haiku-4-5-20251001`
-- **prompt**: full content of `code-review-agent.md` + inputs:
+### 5c — Code Review Agent (`claude-haiku-4-5-20251001`, file: `code-review-agent.md`)
 
 ```
 PROJECT_ROOT:               <absolute path>
@@ -704,33 +496,9 @@ Read `review-result-<nodeId>.json` and `code-result-<nodeId>.json`.
 ```
 Update queue: move from `pendingComponents` to `completedComponents`. Write queue file. Proceed to next component.
 
-**Has failures** (iteration 1–4):
+**Has failures** (iteration 1–4): Print CSS failures (selector/property/expected/got) and code blockers (file:line/issue), increment `ITERATION`, set `PREVIOUS_REVIEW_PATH`, loop to Step 5a.
 
-Print:
-```
-[pixel-twin] [N/TOTAL] <figmaName> — ❌ iteration <I>/4
-  CSS failures (<K>):
-    - <selector>: <property>  expected <X>  got <Y>
-  Code blockers (<M>):
-    - <file>:<line> — <issue>
-```
-
-Loop back to Step 5a for this component with `ITERATION` incremented and `PREVIOUS_REVIEW_PATH` set.
-
-**Iteration 5** (stuck — escalate):
-```
-[pixel-twin] [N/TOTAL] <figmaName> — 🔴 STUCK after 4 iterations
-
-Remaining CSS failures:
-  <list>
-Remaining code blockers:
-  <list>
-
-Options:
-  A. Provide a hint or context and retry
-  B. Skip this component for now
-```
-Wait for engineer response before proceeding.
+**Iteration 5** (stuck): Print remaining failures + "Options: A. Provide hint and retry  B. Skip". Wait for engineer before proceeding.
 
 **Only `figma_conflict` rows** (no `fail` rows):
 Log conflicts to `figmaDiscrepancies` in the Coverage Map and proceed — these are Figma inconsistencies, not code bugs. Designer should be notified separately.
@@ -739,36 +507,11 @@ Log conflicts to `figmaDiscrepancies` in the Coverage Map and proceed — these 
 
 ## Step 6 — Final sign-off
 
-After all components in the queue are done, write a report to `PROJECT_ROOT/.claude/pixel-twin/reports/<frameId>-<ISO-date>.md`:
+Write `PROJECT_ROOT/.claude/pixel-twin/reports/<frameId>-<ISO-date>.md` containing: run header (mode, frame URL, total properties), results table (Component | Pass | Fail | Figma Conflict | Stuck), failures list (selector / property / expected / actual), Figma inconsistencies list.
 
-```markdown
-# pixel-twin run — <frameId> — <ISO date>
-
-Mode: build | upgrade
-Frame: <figma_url>
-Total properties checked: <N>
-
-## Results
-
-| Component | Pass | Fail | Figma Conflict | Stuck |
-|-----------|------|------|----------------|-------|
-| <name>    | N    | 0    | 0              | —     |
-
-## Failures (if any)
-<list of selector / property / expected / actual>
-
-## Figma inconsistencies (flagged for designer, not failures)
-<list>
-```
-
-Then print to terminal:
+Then print:
 
 ```
-[pixel-twin] Complete.
-  ✅ Passed:  <list>
-  🔴 Stuck:   <list, if any>
-  ⚠️  Figma inconsistencies (flagged for designer): <list, if any>
-
-Report: .claude/pixel-twin/reports/<frameId>-<date>.md
-No git changes made. Review the diff and commit when ready.
+[pixel-twin] Complete.  ✅ Passed: <list>  🔴 Stuck: <list>  ⚠️ Figma conflicts: <list>
+Report: .claude/pixel-twin/reports/<frameId>-<date>.md  No git changes made.
 ```

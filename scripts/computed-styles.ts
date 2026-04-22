@@ -29,6 +29,11 @@ const DOM_METRIC_PROPS = new Set([
   // Elements without data-testid appear as "<tagname>:<position>", e.g. "div:3".
   // Used by Visual Review Agent to verify sibling order in structural rows.
   "childrenTestids",
+  // Samples the center pixel color of an <img> element via Canvas API.
+  // Returns "rgb(R, G, B)" on success, "cross-origin" if CORS blocks the read,
+  // "not-an-img" if the element is not an <img>, or "canvas-unavailable" if 2D context failed.
+  // Used to verify icon/image asset colors when CSS getComputedStyle cannot measure them.
+  "imagePixelColor",
 ])
 
 import { chromium, type Page } from "@playwright/test"
@@ -56,7 +61,8 @@ Options:
   --wait-for <selector>   Wait for this selector before extracting
   --properties <list>     Comma-separated CSS properties (single mode only)
   --interactions <json>   JSON array of page interactions to execute before measuring.
-                          Each item: { "action": "click"|"waitFor", "selector": "<css>", "waitFor"?: "<css>" }
+                          Each item: { "action": "click"|"waitFor"|"upload", "selector": "<css>", "waitFor"?: "<css>", "fileData"?: "<filename>" }
+                          "upload": calls setInputFiles with a synthetic file buffer; fileData is the displayed filename.
                           Example: '[{"action":"click","selector":"[data-value=exceptions]"},{"action":"waitFor","selector":"[data-tab-id=exceptions]"}]'
   --viewport-width <px>   Viewport width (default: 1440)
   --viewport-height <px>  Viewport height (default: 900)
@@ -114,6 +120,7 @@ async function main() {
   type Interaction =
     | { action: "click"; selector: string; waitFor?: string }
     | { action: "waitFor"; selector: string }
+    | { action: "upload"; selector: string; fileData?: string; waitFor?: string }
 
   const interactions: Interaction[] = interactionsArg
     ? (JSON.parse(interactionsArg) as Interaction[])
@@ -140,6 +147,20 @@ async function main() {
         }
       } else if (interaction.action === "waitFor") {
         await page.waitForSelector(interaction.selector, { timeout: 15_000 })
+      } else if (interaction.action === "upload") {
+        // Upload a minimal synthetic file — verifies the UI state after file selection,
+        // not actual file content. fileData is used as the displayed filename.
+        const fileName = interaction.fileData ?? "test-file.pdf"
+        const mimeType = fileName.endsWith(".pdf") ? "application/pdf" : "application/octet-stream"
+        const minimalPdfBytes = Buffer.from("%PDF-1.4 1 0 obj<</Type /Catalog>>endobj\n%%EOF")
+        await page.setInputFiles(interaction.selector, {
+          name: fileName,
+          mimeType,
+          buffer: minimalPdfBytes,
+        })
+        if (interaction.waitFor) {
+          await page.waitForSelector(interaction.waitFor, { timeout: 15_000 })
+        }
       }
     }
 
@@ -164,7 +185,7 @@ async function main() {
             results.push({ selector: item.selector, properties: {}, error: `Selector not found: ${item.selector}` })
             continue
           }
-          const DOM_METRICS = ["scrollWidth","clientWidth","scrollHeight","clientHeight","offsetWidth","offsetHeight","offsetTop","offsetLeft","boundingWidth","boundingHeight","boundingTop","boundingLeft","boundingRight","boundingBottom","isOverflowingX","isOverflowingY","childrenTestids"]
+          const DOM_METRICS = ["scrollWidth","clientWidth","scrollHeight","clientHeight","offsetWidth","offsetHeight","offsetTop","offsetLeft","boundingWidth","boundingHeight","boundingTop","boundingLeft","boundingRight","boundingBottom","isOverflowingX","isOverflowingY","childrenTestids","imagePixelColor"]
           const props = await el.evaluate(
             (node, [properties, domMetrics]) => {
               const computed = window.getComputedStyle(node)
@@ -186,6 +207,31 @@ async function main() {
                       return testid ?? `${child.tagName.toLowerCase()}:${i + 1}`
                     })
                     result[p] = JSON.stringify(children)
+                  }
+                  else if (p === "imagePixelColor") {
+                    if (!(node instanceof HTMLImageElement)) {
+                      result[p] = "not-an-img"
+                    } else if (!node.complete || node.naturalWidth === 0) {
+                      result[p] = "not-loaded"
+                    } else {
+                      try {
+                        const canvas = document.createElement("canvas")
+                        canvas.width = node.naturalWidth
+                        canvas.height = node.naturalHeight
+                        const ctx = canvas.getContext("2d")
+                        if (!ctx) {
+                          result[p] = "canvas-unavailable"
+                        } else {
+                          ctx.drawImage(node, 0, 0)
+                          const cx = Math.floor(node.naturalWidth / 2)
+                          const cy = Math.floor(node.naturalHeight / 2)
+                          const d = ctx.getImageData(cx, cy, 1, 1).data
+                          result[p] = `rgb(${d[0]}, ${d[1]}, ${d[2]})`
+                        }
+                      } catch {
+                        result[p] = "cross-origin"
+                      }
+                    }
                   }
                   else result[p] = String((node as unknown as Record<string,number>)[p] ?? "")
                 } else {
@@ -238,6 +284,31 @@ async function main() {
                       return testid ?? `${child.tagName.toLowerCase()}:${i + 1}`
                     })
                     result[p] = JSON.stringify(children)
+                  }
+                  else if (p === "imagePixelColor") {
+                    if (!(el instanceof HTMLImageElement)) {
+                      result[p] = "not-an-img"
+                    } else if (!el.complete || el.naturalWidth === 0) {
+                      result[p] = "not-loaded"
+                    } else {
+                      try {
+                        const canvas = document.createElement("canvas")
+                        canvas.width = el.naturalWidth
+                        canvas.height = el.naturalHeight
+                        const ctx = canvas.getContext("2d")
+                        if (!ctx) {
+                          result[p] = "canvas-unavailable"
+                        } else {
+                          ctx.drawImage(el, 0, 0)
+                          const cx = Math.floor(el.naturalWidth / 2)
+                          const cy = Math.floor(el.naturalHeight / 2)
+                          const d = ctx.getImageData(cx, cy, 1, 1).data
+                          result[p] = `rgb(${d[0]}, ${d[1]}, ${d[2]})`
+                        }
+                      } catch {
+                        result[p] = "cross-origin"
+                      }
+                    }
                   }
                   else result[p] = String((el as unknown as Record<string,number>)[p] ?? "")
                 } else {

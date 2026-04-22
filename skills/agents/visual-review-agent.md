@@ -34,11 +34,13 @@ On re-runs (after fix attempts): include rows with `status: "fail"` or `status: 
 
 If no matching rows: write result file with `{ "skipped": true }` and stop.
 
-**Split rows into two groups by `verificationMethod`:**
-- **Group A** (default state): rows without `"verificationMethod": "interactive"` — measured on page load, no interactions needed.
-- **Group B** (interactive state): rows with `"verificationMethod": "interactive"` — measured after `prerequisites.setupInteractions` are executed.
+**Group rows by their `state` field:**
+- Rows without a `state` field (or `state == null`) → **Group A** (default state): measured on page load, no interactions needed.
+- Rows with a non-null `state` field → **Group B** (interactive state): grouped further by the value of `state`. Each distinct `state` value produces its own batch, run with that group's `setupInteractions`.
 
-If Group B is non-empty but `prerequisites.setupInteractions` is null or empty: log a warning and treat Group B as Group A (best-effort).
+For Group B: each row carries its own `setupInteractions` array. All rows sharing the same `state` value MUST have identical `setupInteractions` — if they differ, log a warning and use the first non-empty one found.
+
+If Group B is non-empty but every row's `setupInteractions` is null or empty: log a warning and measure Group B rows after page load only (best-effort; results may be inaccurate for state-dependent properties).
 
 ---
 
@@ -63,7 +65,7 @@ From `COVERAGE_MAP_PATH` prerequisites block:
 
 3. `waitFor` and `viewport` will be passed as args to the script.
 
-4. If `prerequisites.setupInteractions` is a non-empty array: pass it as `--interactions` to the **Group B** batch run (see Step 3). Format: JSON array of `{ action, selector, waitFor? }` objects where `action` is `"click"` or `"waitFor"`.
+4. If any Group B rows exist: their `setupInteractions` (on each row, not `prerequisites.setupInteractions`) will be passed as `--interactions` to the corresponding batch run (see Step 3). Format: JSON array of `{ action, selector, waitFor? }` objects where `action` is `"click"` or `"waitFor"`. `prerequisites.setupInteractions` is ignored for per-row measurement — it is only used by the Orchestrator for pre-flight setup.
 
 `setupInteractions` example:
 ```json
@@ -79,10 +81,10 @@ From `COVERAGE_MAP_PATH` prerequisites block:
 
 **Skip rows with `"property": "structure"` — handled separately in Step 4b.**
 
-**Group A batch** (default state): rows without `"verificationMethod": "interactive"`.
-**Group B batch** (interactive state): rows with `"verificationMethod": "interactive"`.
+**Group A batch** (default state): rows where `state` is null or absent.
+**Group B batches** (interactive states): one batch per distinct `state` value. Each batch contains only rows with that `state` value.
 
-For each group, build a batch items array grouped by selector:
+For each group/batch, build a batch items array grouped by selector:
 
 ```json
 [
@@ -94,7 +96,7 @@ For each group, build a batch items array grouped by selector:
 ```
 
 Write Group A to: `/tmp/pixel-twin-batch-A-<COMPONENT_NODE_ID>.json`
-Write Group B to: `/tmp/pixel-twin-batch-B-<COMPONENT_NODE_ID>.json`
+Write each Group B batch to: `/tmp/pixel-twin-batch-B-<STATE_SLUG>-<COMPONENT_NODE_ID>.json` where `STATE_SLUG` is the `state` value with spaces replaced by underscores.
 
 ---
 
@@ -111,21 +113,69 @@ npx tsx <PIXEL_TWIN_ROOT>/scripts/computed-styles.ts \
   [--auth-helper "<prerequisites.auth>" if non-null]
 ```
 
-**Pass B — interactive state** (only if Group B is non-empty):
+**Pass B — interactive states** (one pass per distinct `state` value, only if Group B is non-empty):
+
+For each distinct state (e.g. `"action_selected"`, `"file_uploaded"`):
 ```bash
 npx tsx <PIXEL_TWIN_ROOT>/scripts/computed-styles.ts \
   --url "<prerequisites.url>" \
-  --batch /tmp/pixel-twin-batch-B-<COMPONENT_NODE_ID>.json \
+  --batch /tmp/pixel-twin-batch-B-<STATE_SLUG>-<COMPONENT_NODE_ID>.json \
   --wait-for "<prerequisites.waitFor>" \
   --viewport-width <prerequisites.viewport.width> \
   --viewport-height <prerequisites.viewport.height> \
   [--auth-helper "<prerequisites.auth>" if non-null] \
-  [--interactions '<prerequisites.setupInteractions as JSON string>' if non-empty]
+  --interactions '<rows[0].setupInteractions as JSON string>'
 ```
+
+Use the `setupInteractions` from the first row of that state group (all rows in the group share the same interactions — verified in Step 1).
 
 Parse each JSON array output. For each result, match back to Coverage Map rows by `selector`.
 
 If a result has a non-null `error`: set `status: "selector_not_found"` on all rows for that selector.
+
+### Step 4c — Screenshot comparison (for each component with a stored Figma screenshot)
+
+Check `coverage_map.prerequisites.figmaScreenshots` for an entry matching `COMPONENT_NODE_ID`.
+
+If no entry exists: skip this step entirely.
+
+If an entry exists (`figmaScreenshotPath`, `figmaScreenshotWidth`, `figmaScreenshotHeight`):
+
+**1. Identify the component's CSS selector** — use the selector from the first non-structural row in the Coverage Map for this `figmaNodeId`. This selector targets the component root element.
+
+**2. Capture browser screenshot:**
+```bash
+npx tsx <PIXEL_TWIN_ROOT>/scripts/screenshot.ts \
+  --url "<prerequisites.url>" \
+  --selector "<component root selector>" \
+  --out "/tmp/pixel-twin-screenshot-actual-<COMPONENT_NODE_ID>.png" \
+  --wait-for "<prerequisites.waitFor>" \
+  [--auth-helper "<prerequisites.auth>" if non-null]
+```
+
+Output: `{ path, width, height }` — record `actualWidth` and `actualHeight`.
+
+**3. Dimension check:** If `actualWidth` and `figmaScreenshotWidth` differ by more than 10px (or height by more than 10px): log a warning `"Screenshot dimensions mismatch: actual <WxH> vs figma <WxH> — comparison may be inaccurate"` but still proceed.
+
+**4. Compare screenshots:**
+```bash
+npx tsx <PIXEL_TWIN_ROOT>/scripts/pixelmatch-compare.ts \
+  --actual "/tmp/pixel-twin-screenshot-actual-<COMPONENT_NODE_ID>.png" \
+  --expected "<figmaScreenshotPath (absolute)>" \
+  --diff "/tmp/pixel-twin-screenshot-diff-<COMPONENT_NODE_ID>.png" \
+  --threshold 0.1
+```
+
+If this fails with a dimensions error: set `screenshotDiffPercent: null`, `screenshotStatus: "dimension-mismatch"` in result file. Do NOT treat as a CSS `fail`.
+
+If it succeeds: record `{ diffPixels, totalPixels, diffPercent, diffImagePath }`.
+
+**5. Pass/fail threshold:**
+- `diffPercent <= 1.0` → `screenshotStatus: "pass"`
+- `1.0 < diffPercent <= 5.0` → `screenshotStatus: "warn"` (flag for human review, not a hard failure)
+- `diffPercent > 5.0` → `screenshotStatus: "fail"` — add to `screenshotFailures` in result file
+
+A `screenshotStatus: "fail"` counts toward `failCount` in the result file. A `"warn"` does not.
 
 ### Step 4b — Structural rows
 
@@ -243,6 +293,9 @@ Write `PROJECT_ROOT/.claude/pixel-twin/review-result-<COMPONENT_NODE_ID>.json`:
   "failCount": 3,
   "figmaConflictCount": 1,
   "selectorNotFoundCount": 0,
+  "screenshotStatus": "pass | warn | fail | dimension-mismatch | skipped",
+  "screenshotDiffPercent": 0.42,
+  "screenshotDiffImagePath": "/tmp/pixel-twin-screenshot-diff-<nodeId>.png",
   "failures": [
     {
       "selector": "[data-testid='filter-sidebar']",
@@ -250,6 +303,13 @@ Write `PROJECT_ROOT/.claude/pixel-twin/review-result-<COMPONENT_NODE_ID>.json`:
       "expected": "rgb(255,255,255)",
       "actual": "rgb(248,248,248)",
       "tolerance": "exact-after-hex-rgb"
+    }
+  ],
+  "screenshotFailures": [
+    {
+      "diffPercent": 7.21,
+      "diffImagePath": "/tmp/pixel-twin-screenshot-diff-<nodeId>.png",
+      "note": "Screenshot diff exceeds 5% threshold — check diff image for visual regressions not caught by CSS properties (e.g. icon shape, SVG path, rendering artifact)"
     }
   ],
   "figmaConflicts": [
@@ -277,4 +337,5 @@ Write `PROJECT_ROOT/.claude/pixel-twin/review-result-<COMPONENT_NODE_ID>.json`:
     - [data-testid="apply-button"]: font-size  expected 14px  got 12px
   FIGMA_CONFLICT     1 property (Figma stale — logged for designer, not a failure)
   SELECTOR_NOT_FOUND 0
+  SCREENSHOT         pass (0.42% diff) | warn (3.1% diff — review diff image) | fail (7.2% diff) | skipped
 ```

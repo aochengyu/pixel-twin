@@ -4,7 +4,7 @@ A Claude Code skill that automates the frontend UI implementation loop — from 
 
 The name says it all: when the skill works, the running app and the Figma mock are indistinguishable side-by-side. They are pixel twins.
 
-**Status: v2.0 redesign in progress — see [`docs/pixel-twin-v2-design.md`](docs/pixel-twin-v2-design.md)**
+**Status: v0.2.0 — pre-flight QA, mandatory property matrix, and dart auto-detection complete. Threshold calibration and CI gate pending. See [`CHANGELOG.md`](CHANGELOG.md) for current feature status.**
 
 ---
 
@@ -82,17 +82,13 @@ Create `.claude/pixel-twin.config.ts` in your project to override defaults:
 
 ```typescript
 export const config = {
-  commands: {
-    dev: "npm run dev",
-    typecheck: "npm run typecheck",
-    lint: "npm run lint",
-    test: "npm run test"
-  },
-  dev: {
-    port: 3000,
-    authHelper: "e2e/helpers/auth.ts",
-    designSystem: "@your-org/design-system"
-  }
+  port: 3000,
+  srcDir: ".",
+  designSystem: "@your-org/design-system",
+  designSystemKnowledgePath: null,
+  safetyProfile: "none",
+  conventionProfile: "none",
+  auth: ".claude/pixel-twin-auth.ts"  // path to Playwright auth helper
 }
 ```
 
@@ -104,10 +100,11 @@ See [`docs/pixel-twin-v2-design.md`](docs/pixel-twin-v2-design.md) for the curre
 
 | Version | Theme | Status |
 |---------|-------|--------|
-| v1.0 | First implementation (v1 architecture) | Superseded by v2 redesign |
-| v2.0 | Redesigned architecture — Coverage Map, real orchestration, closed verify-fix loop | In progress |
-| v3.0 | Interactive states, animations, form validation | Planned |
-| v4.0 | Responsive/breakpoints, Storybook, multi-design-system | Planned |
+| v0.1.0 | First complete implementation — all four agents, Coverage Map architecture, closed verify-fix loop | Released 2026-04-10 |
+| v0.2.0 | Pre-flight interactive QA, mandatory property matrix, dart auto-detection, color normalization, root cause analysis | Released 2026-04-21 |
+| v1.0.0 | Stable release — Build/Upgrade modes calibrated, CI gate enforced, threshold calibrated | Planned |
+| v2.0.0 | Interactive states, animations, form validation | Planned |
+| v3.0.0 | Responsive/breakpoints, Storybook, multi-design-system | Planned |
 
 ---
 

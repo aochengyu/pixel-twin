@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-10
 **Author:** aochengyu
-**Status:** Draft — pending implementation plan
+**Status:** Superseded — v1 was implemented as v1.0.0-alpha (2026-04-10), then replaced by the v2 Coverage Map architecture. See `pixel-twin-v2-design.md` for the current spec.
 
 ---
 
@@ -71,13 +71,13 @@ Model selection follows the principle: use the cheapest model that can reliably 
 
 | Agent | Model | Rationale |
 |-------|-------|-----------|
-| **Orchestrator** | Haiku | Routing and state management — no deep reasoning needed |
-| **Implementation Agent** | Sonnet (default) / Opus (escalation) | Core creative work — code generation, Figma interpretation, fix synthesis. Opus used when stuck after multiple failed iterations or when the component is highly complex. |
+| **Orchestrator** | Sonnet | Mode detection and component classification require judgment — Haiku miscategorizes edge cases |
+| **Implementation Agent** | Opus 4.7 | Core creative work — code generation, Figma interpretation, fix synthesis. Opus used as default to minimize loop count and get it right the first time. |
 | **Visual Review Agent** | Sonnet | Diff categorization (Structural / Marginal / Rendering Delta) requires judgment — Haiku miscategorizes edge cases. Scripts handle all computation; Sonnet handles only the categorization step. |
 | **Code Review Agent — Phase 1** | Haiku | Runs shell tools (`typecheck`, `lint`, `test`) — purely mechanical |
 | **Code Review Agent — Phase 2** | Sonnet | Semantic analysis of changed code — needs language understanding |
 
-Cost profile: most iterations are cheap (Haiku for review, Sonnet for implementation). Opus is reserved as an escalation path — never used by default.
+Cost profile: Opus for implementation (to minimize loop count), Sonnet for orchestration and semantic review, Haiku for mechanical checks.
 
 ---
 
@@ -112,17 +112,17 @@ Three roles. No more, no less.
               │  │ · Outputs ReviewSpec│  │
               │  └──────────┬──────────┘  │
               │             │              │
-              │    ┌────────┴────────┐     │
-              │    │   PARALLEL      │     │
-              │    ▼                 ▼     │
-              │  ┌──────────┐ ┌──────────┐│
-              │  │ VISUAL   │ │  CODE    ││
-              │  │ REVIEW   │ │  REVIEW  ││
-              │  │ AGENT    │ │  AGENT   ││
-              │  │(stateless│ │(stateless││
-              │  │subagent) │ │subagent) ││
-              │  └────┬─────┘ └────┬─────┘│
-              │       └─────┬──────┘      │
+              │  ┌──────────▼──────────┐  │
+              │  │   VISUAL REVIEW      │  │
+              │  │       AGENT          │  │
+              │  │     (stateless)      │  │
+              │  └──────────┬──────────┘  │
+              │             │ sequential   │
+              │  ┌──────────▼──────────┐  │
+              │  │   CODE REVIEW        │  │
+              │  │       AGENT          │  │
+              │  │     (stateless)      │  │
+              │  └──────────┬──────────┘  │
               │             ▼             │
               │      CombinedReport       │
               │             │             │
@@ -219,7 +219,7 @@ Before navigating, Review Agent authenticates using the project's mock login mec
 
 ## 8. Code Review Agent (stateless)
 
-Spawned fresh each verification round in parallel with Visual Review Agent.
+Spawned fresh each verification round after Visual Review Agent completes (sequential, not parallel).
 
 ### Phase 1 — Automated tools (run in parallel)
 ```bash
@@ -313,8 +313,8 @@ At startup, the Orchestrator builds the component queue by reading the Figma fra
 For each component (outside-in: layout → sections → components → details):
 
   1. Implementation Agent reads Figma, writes/fixes code, outputs ReviewSpec
-  2. Visual Review Agent + Code Review Agent run in parallel
-  3. Both produce reports → merged into CombinedReport
+  2. Visual Review Agent runs, produces review-result JSON
+  3. Code Review Agent runs after Visual Review Agent, produces code-result JSON
   4. hasBlockers?
        No  → component done, move to next
        Yes → CombinedReport sent back to Implementation Agent, loop
@@ -436,8 +436,8 @@ export const config = {
   },
   dev: {
     port: 3000,
-    authHelper: "e2e/helpers/auth.ts",   // path to Playwright auth setup
-    designSystem: "@datavant/dart"        // enforced in Code Review Phase 2
+    auth: ".claude/pixel-twin-auth.ts",  // path to Playwright auth setup
+    designSystem: "@datavant/dart"       // enforced in Code Review Phase 2
   },
   review: {
     // safetyProfile: which sensitive-data rules to enforce in Code Review Phase 2
@@ -487,7 +487,7 @@ At each step the Orchestrator surfaces a compact status line — never silent fo
 [ui-implement] Analyzing Figma frame... done (8 components queued)
 [ui-implement] Build Mode — no existing component found
 [ui-implement] [1/8] Header — implementing...
-[ui-implement] [1/8] Header — reviewing (visual + code in parallel)...
+[ui-implement] [1/8] Header — verifying (visual)... then code review...
 [ui-implement] [1/8] Header — ✓ pass (3 computed-style checks, 0 code blockers)
 [ui-implement] [2/8] FilterSidebar — implementing...
 ```

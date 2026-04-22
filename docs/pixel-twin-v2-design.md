@@ -1,7 +1,7 @@
 # pixel-twin v2 Design Spec
 
 **Date:** 2026-04-13
-**Status:** Approved — ready for implementation
+**Status:** Implemented — v2 is in production as of 2026-04-21. See CHANGELOG for post-spec additions (pre-flight QA, mandatory property matrix, root cause analysis loop, color normalization, childrenTestids metric).
 
 ---
 
@@ -216,21 +216,26 @@ Figma auto-named nodes fall into two categories:
 
 ## 12. UI State Setup (Prerequisites Block)
 
-**One coverage map = one UI state.** If a page has multiple distinct visual states (e.g. different tabs, a drawer open vs closed, a modal visible), create a separate coverage map per state. Use a descriptive suffix in the filename:
+A single coverage map can cover **multiple UI states** within the same frame. Each row that belongs to an interactive state carries a `state` field and a `setupInteractions` array describing the exact click/input/keyboard sequence to reach that state before measuring.
 
+```json
+{
+  "selector": "[class*='dropzone']",
+  "state": "approve-dropzone",
+  "setupInteractions": [
+    { "action": "click", "selector": "input[value='approve']", "waitFor": "[class*='dropzone']" }
+  ],
+  "property": "display",
+  "expected": "flex",
+  "status": "pending"
+}
 ```
-coverage-map-<frameId>-<state-label>.json
-# Examples:
-coverage-map-209-11957-all-tab.json
-coverage-map-209-11957-exceptions-tab.json
-coverage-map-209-11957-drawer-open.json
-```
 
-The Orchestrator processes one coverage map per invocation. To verify multiple states, run `/pixel-twin` once per state URL (they can share the same `figmaUrl` but differ in `prerequisites.url` and `setupInteractions`).
+**When to use separate files vs. per-row state:**
+- **Per-row `setupInteractions` (preferred):** Different panels or sections within the same page that require a click or input to reveal. Default-state rows and interactive-state rows coexist in the same map.
+- **Separate map files:** Truly separate pages (different URLs) or states that require a completely different `prerequisites.url`. Use a descriptive suffix: `coverage-map-<frameId>-<state-label>.json`.
 
-This keeps each map focused and avoids the complexity of maintaining multiple `setupInteractions` sequences in a single file.
-
-The `prerequisites` block in the Coverage Map defines required page state before verification:
+The `prerequisites` block in the Coverage Map defines page-level required state before any rows are verified. Per-row `setupInteractions` handles UI interactions within that page.
 - `url`: full URL including query params (ensures correct tab/filter state)
 - `auth`: auth script path
 - `waitFor`: wait condition (e.g. `tbody tr`)
