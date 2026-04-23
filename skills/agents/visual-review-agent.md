@@ -67,11 +67,14 @@ From `COVERAGE_MAP_PATH` prerequisites block:
 
 4. If any Group B rows exist: their `setupInteractions` (on each row, not `prerequisites.setupInteractions`) will be passed as `--interactions` to the corresponding batch run (see Step 3). Format: JSON array of `{ action, selector, waitFor? }` objects where `action` is `"click"` or `"waitFor"`. `prerequisites.setupInteractions` is ignored for per-row measurement — it is only used by the Orchestrator for pre-flight setup.
 
+   **⚠️ `--wait-for` runs AFTER `--interactions`** — `--wait-for` fires only after all interactions complete. It cannot be used to wait for the initial page state before clicking. To guarantee an element exists before the first `"click"` interaction, add a `{ "action": "waitFor", "selector": "<initial-element>" }` as the **first entry** in `setupInteractions`. Example: wait for tabs to be ready before clicking to a tab:
+
 `setupInteractions` example:
 ```json
 [
-  { "action": "click", "selector": "[data-testid='roi-tabs'] [data-value='exceptions']" },
-  { "action": "waitFor", "selector": "[data-tab-id='exceptions'] tbody tr" }
+  { "action": "waitFor", "selector": "[role='tablist']" },
+  { "action": "click",   "selector": "[role='tablist'] [role='tab']:nth-child(2)" },
+  { "action": "waitFor", "selector": "[data-testid='pdf-tab-content']" }
 ]
 ```
 
@@ -124,10 +127,13 @@ npx tsx <PIXEL_TWIN_ROOT>/scripts/computed-styles.ts \
   --viewport-width <prerequisites.viewport.width> \
   --viewport-height <prerequisites.viewport.height> \
   [--auth-helper "<prerequisites.auth>" if non-null] \
+  [--headed if prerequisites.headed is true] \
   --interactions '<rows[0].setupInteractions as JSON string>'
 ```
 
 Use the `setupInteractions` from the first row of that state group (all rows in the group share the same interactions — verified in Step 1).
+
+**`--headed` flag**: Pass `--headed` when `prerequisites.headed === true` OR when any row in the state group has `"headed": true`. Use headed mode when interactions require a trusted browser user gesture that headless mode cannot simulate (e.g. DateInput calendar open, file dialog). Headed mode opens a visible browser window — requires a desktop environment.
 
 Parse each JSON array output. For each result, match back to Coverage Map rows by `selector`.
 

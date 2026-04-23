@@ -5,6 +5,36 @@ All notable changes to pixel-twin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-04-23
+
+Process hardening: mandatory Figma re-verification before every CSS fix, Gate 8, and `--headed` flag for computed-styles.
+
+### Added
+
+- **Gate 8 — Figma citation block required before any CSS write** (`skills/pixel-twin.md`) — Every proposed fix must be accompanied by a printed citation block (`figma nodeId / figma says / DOM measured / fix`) before any code is written. If the block cannot be produced, the fix is blocked and the row is set to `needs-verify`. This makes Gate 6 violations visible to the engineer rather than silent.
+- **Step 5d — mandatory Figma re-verification before dispatching Implementation Agent** (`skills/pixel-twin.md`) — When VRA reports failures, the orchestrator must now call `get_design_context` on each failing row's `figmaNodeId` and print a citation block before looping back. If Figma returns a value that differs from Coverage Map `expected`, the map is corrected before dispatch — preventing the agent from fixing toward the wrong target.
+- **Implementation Agent Phase 1 Step 0 — `get_design_context` for every FAIL row** (`skills/agents/implementation-agent.md`) — On ITERATION > 1, before root cause analysis, the agent must call `get_design_context` for each FAIL row and explicitly state "Figma says X / map expected Y." If they differ, the Figma value is the target. "The Coverage Map says X" is not a valid CSS justification.
+- **`--headed` flag for `computed-styles.ts`** — Runs Playwright in headed (non-headless) mode for interactions that require trusted user gestures (e.g. DateInput calendar).
+
+### Fixed
+
+- **`computed-styles.ts` `--batch` argument parsing** — `--batch` was incorrectly treated as a boolean flag; corrected to accept a file path string.
+
+---
+
+## [0.4.0] - 2026-04-22
+
+Bug fixes: IA/VRA ownership boundary, Mantine v8 tab selector correctness, and `--wait-for` timing clarification.
+
+### Fixed
+
+- **IA must not update Coverage Map `status`/`actual` (critical)** — Implementation Agent Phase 6 previously said to record self-verified rows "so the Visual Review Agent can skip them if unchanged." This caused IA to write `"status": "pass"` in the Coverage Map, making VRA a no-op on re-runs. Phase 6 now says "for diagnostic purposes only." Phase 7 adds a hard rule: IA must never update Coverage Map `status` or `actual` — those fields are exclusively managed by VRA.
+- **Mantine v8 `[data-value]` warning in dart-knowledge.md** — `Tabs.Tab` buttons in Mantine v8 do NOT render a `[data-value]` attribute. Added an explicit warning to the Tabs section and updated the `setupInteractions` example to avoid this selector.
+- **`keepMounted` gotcha in dart-knowledge.md** — Documents that all Mantine tab panels remain in the DOM by default (`keepMounted={true}`). `waitFor: "[data-testid='content']"` can match a hidden panel from another tab. Added guidance to use `[data-state='active']` or a bounding-box check.
+- **`--wait-for` runs AFTER `--interactions` (VRA Step 2)** — Clarified in `visual-review-agent.md` that `--wait-for` fires only after all interactions complete. Documented the pattern: add `{ "action": "waitFor", "selector": "<initial-element>" }` as the first entry in `setupInteractions` to guarantee page readiness before the first click.
+
+---
+
 ## [0.3.0] - 2026-04-22
 
 Gap closure: Figma-first Coverage Map building, screenshot comparison, SVG/image color verification, and VRA interactive state format.
@@ -80,8 +110,8 @@ First complete implementation. All four agents implemented and wired together.
 
 | Version range | Meaning |
 |---------------|---------|
-| `0.x.y` | Pre-release — core mechanics implemented, threshold calibration and CI gate pending |
-| `1.0.0` | Stable release — Build and Upgrade modes calibrated, pre-flight QA complete, CI gate enforced |
-| `1.x.y` | Feature additions and polish on v1 |
-| `2.0.0` | Interactive states, animations, form validation |
-| `3.0.0` | Responsive/breakpoints, Storybook integration, multi-design-system |
+| `0.x.y` | Pre-release — mechanics are implemented but known bugs may still exist; no stability guarantee |
+| `1.0.0` | First stable release — all known bugs closed, real-project run completed, thresholds calibrated, CI gate enforced |
+| `1.x.y` | Incremental additions on the stable base (new property types, new dart component entries, convenience improvements) |
+
+**Feature gate** — Interactive states, animations, responsive/breakpoints, and Storybook integration will be planned only after `1.0.0` is released. Adding features to a pre-release product that still has unfixed bugs compounds instability. Each feature category will be scoped as a separate minor version (`1.1.0`, `1.2.0`, etc.) once the core is stable, not as major version bumps.

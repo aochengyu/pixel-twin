@@ -66,6 +66,8 @@ Options:
                           Example: '[{"action":"click","selector":"[data-value=exceptions]"},{"action":"waitFor","selector":"[data-tab-id=exceptions]"}]'
   --viewport-width <px>   Viewport width (default: 1440)
   --viewport-height <px>  Viewport height (default: 900)
+  --headed                Run browser in headed (non-headless) mode — use when interactions
+                          require trusted user gestures (e.g. DateInput calendar open)
   --help                  Show this help
 
 Batch JSON input format:
@@ -113,20 +115,22 @@ async function main() {
   const viewportWidth = parseInt((args["viewport-width"] as string | undefined) ?? "1440", 10)
   const viewportHeight = parseInt((args["viewport-height"] as string | undefined) ?? "900", 10)
   const interactionsArg = args["interactions"] as string | undefined
+  const headed = args["headed"] === true || args["headed"] === ""
 
   if (!url) die("--url is required")
   if (!selector && !batchFile) die("either --selector or --batch is required")
 
+  type WaitState = "attached" | "visible" | "hidden" | "detached"
   type Interaction =
     | { action: "click"; selector: string; waitFor?: string }
-    | { action: "waitFor"; selector: string }
+    | { action: "waitFor"; selector: string; state?: WaitState }
     | { action: "upload"; selector: string; fileData?: string; waitFor?: string }
 
   const interactions: Interaction[] = interactionsArg
     ? (JSON.parse(interactionsArg) as Interaction[])
     : []
 
-  const browser = await chromium.launch()
+  const browser = await chromium.launch({ headless: !headed })
   try {
     const context = await browser.newContext({ viewport: { width: viewportWidth, height: viewportHeight } })
     const page = await context.newPage()
@@ -146,7 +150,10 @@ async function main() {
           await page.waitForSelector(interaction.waitFor, { timeout: 15_000 })
         }
       } else if (interaction.action === "waitFor") {
-        await page.waitForSelector(interaction.selector, { timeout: 15_000 })
+        await page.waitForSelector(interaction.selector, {
+          timeout: 15_000,
+          state: interaction.state ?? "attached",
+        })
       } else if (interaction.action === "upload") {
         // Upload a minimal synthetic file — verifies the UI state after file selection,
         // not actual file content. fileData is used as the displayed filename.

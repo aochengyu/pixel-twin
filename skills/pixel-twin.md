@@ -22,6 +22,18 @@ You coordinate pixel-accurate UI implementation from Figma to browser. You build
 | 5 | Every significant container + dart instance root has `boundingWidth` + `boundingHeight` rows | Layout cascade bugs invisible |
 | 6 | Every `expected` value is sourced from `get_design_context` output — NEVER from code knowledge, screenshots, or "visually looks correct" reasoning | Cognitive bias: rows pass because you wrote what the code already does, not what Figma specifies |
 | 7 | `get_screenshot` called on every significant container during Step 3d-containers Phase 1; screenshot paths stored in `prerequisites.figmaScreenshots` | Visual regressions in icon shape, SVG paths, or rendering artifacts that CSS properties cannot detect go unnoticed |
+| 8 | Every proposed CSS fix MUST be accompanied by a printed Figma citation block (see format below) before any code is written | Engineer cannot verify the fix is targeting the right value; silent Gate 6 violations go undetected |
+
+**Figma citation block format** (mandatory output before any CSS write):
+```
+[pixel-twin] Figma citation — <selector> / <property>
+  figma nodeId:  <id>
+  figma says:    <value>  (from get_design_context)
+  DOM measured:  <actual>
+  fix:           <what changes and why>
+```
+
+If this block cannot be produced (no `get_design_context` response for the node): do not write the fix. Set the row to `status: "needs-verify"` and report to engineer.
 
 ---
 
@@ -460,7 +472,30 @@ AUTH_HELPER_PATH:   <AUTH_HELPER_PATH resolved in Step 0a, or null>
 
 Print: `[pixel-twin] [N/TOTAL] <figmaName> — verifying...`
 
-Wait for agent. Read `PROJECT_ROOT/.claude/pixel-twin/review-result-<nodeId>.json`.
+**⚡ REAL-TIME PROGRESS (mandatory — do not batch all rows at once)**
+
+Instead of running all Coverage Map rows in a single computed-styles.ts call, split them into groups of **10–12 rows** and output a progress line after each group:
+
+```
+[pixel-twin] measuring... 12/44 rows  ███░░░░░░░░░░░░░░░░░  27%  pass:11  fail:1  pending:0
+[pixel-twin] measuring... 24/44 rows  ██████░░░░░░░░░░░░░░  55%  pass:23  fail:1  pending:0
+[pixel-twin] measuring... 36/44 rows  █████████░░░░░░░░░░░  82%  pass:35  fail:1  pending:0
+[pixel-twin] measuring... 44/44 rows  ████████████████████  100%  pass:43  fail:1  pending:0
+```
+
+**How to split:**
+1. Read all rows from the coverage map for this component
+2. Group into slices of 10–12 rows
+3. For each slice:
+   a. Run `npx tsx computed-styles.ts --url ... --batch <slice-batch.json> ...`
+   b. Compare actual vs expected for each row
+   c. Tally pass/fail/pending counts (cumulative)
+   d. **Immediately print** the progress line: `[pixel-twin] measuring... <done>/<total> rows  <bar>  <pct>%  pass:<P>  fail:<F>  pending:<X>`
+4. After all slices done, write the full results to `review-result-<nodeId>.json`
+
+This gives the user visible progress throughout the run, not just at the end.
+
+Wait for agent (if using VRA). Read `PROJECT_ROOT/.claude/pixel-twin/review-result-<nodeId>.json`.
 
 ### 5c — Code Review Agent (`claude-haiku-4-5-20251001`, file: `code-review-agent.md`)
 
@@ -491,12 +526,53 @@ If code review `hasBlockers: true`: upgrade model to `claude-sonnet-4-6` and re-
 Read `review-result-<nodeId>.json` and `code-result-<nodeId>.json`.
 
 **All pass** (`failCount == 0`, code `hasBlockers == false`):
+
+Compute progress bar from all rows in the Coverage Map (across ALL completed components so far):
+- `pct` = `passCount / totalRows * 100` (exclude pending rows from denominator if desired, but include them in count)
+- `filled` = `round(pct / 5)` blocks (20 blocks = 100%)
+
+Print:
 ```
-[pixel-twin] [N/TOTAL] <figmaName> — ✅ PASS (X/Y properties)
+[pixel-twin] [N/TOTAL] <figmaName> — ✅ PASS
+  <filled>░<empty> <pct>%  pass:<passCount>  fail:<failCount>  pending:<pendingCount>  conflict:<conflictCount>
+```
+Example:
+```
+[pixel-twin] [1/1] Pagination — ✅ PASS
+  ██████████████████░░  90%  pass:41  fail:0  pending:3  conflict:0
 ```
 Update queue: move from `pendingComponents` to `completedComponents`. Write queue file. Proceed to next component.
 
-**Has failures** (iteration 1–4): Print CSS failures (selector/property/expected/got) and code blockers (file:line/issue), increment `ITERATION`, set `PREVIOUS_REVIEW_PATH`, loop to Step 5a.
+**Has failures** (iteration 1–4):
+
+Print CSS failures (selector/property/expected/got) and code blockers (file:line/issue).
+
+**⛔ MANDATORY GATE — Figma re-verification before dispatching Implementation Agent:**
+
+For every FAIL row, call `get_design_context` with its `figmaNodeId` and `FIGMA_FILE_KEY`. Then print a citation block for each:
+
+```
+[pixel-twin] Figma re-verify — <selector> / <property>
+  figma nodeId:  <figmaNodeId>
+  figma says:    <value from get_design_context>
+  map expected:  <expected field in Coverage Map>
+  measured:      <actual field from VRA>
+  verdict:       match | ⚠️ map was wrong — updating expected to <correct value>
+```
+
+If `get_design_context` returns a value that **differs from** the Coverage Map `expected`:
+- Update the Coverage Map `expected` field to the Figma value **before** dispatching the Implementation Agent
+- Do NOT dispatch the agent with a wrong `expected` value — it will loop forever fixing toward the wrong target
+
+If `get_design_context` cannot be called (network error): set the row to `status: "needs-verify"` and **stop** — do not guess. Escalate to engineer.
+
+Only after this block is printed and any Coverage Map corrections are written: increment `ITERATION`, set `PREVIOUS_REVIEW_PATH`, loop to Step 5a.
+
+Print progress after each failed iteration too:
+```
+[pixel-twin] [N/TOTAL] <figmaName> — ❌ iter <I>/4
+  ██████████░░░░░░░░░░  50%  pass:<P>  fail:<F>  pending:<X>  conflict:<C>
+```
 
 **Iteration 5** (stuck): Print remaining failures + "Options: A. Provide hint and retry  B. Skip". Wait for engineer before proceeding.
 
@@ -509,9 +585,18 @@ Log conflicts to `figmaDiscrepancies` in the Coverage Map and proceed — these 
 
 Write `PROJECT_ROOT/.claude/pixel-twin/reports/<frameId>-<ISO-date>.md` containing: run header (mode, frame URL, total properties), results table (Component | Pass | Fail | Figma Conflict | Stuck), failures list (selector / property / expected / actual), Figma inconsistencies list.
 
-Then print:
+Compute final totals across all components and print:
 
 ```
-[pixel-twin] Complete.  ✅ Passed: <list>  🔴 Stuck: <list>  ⚠️ Figma conflicts: <list>
+[pixel-twin] Complete — <frameId>
+  ████████████████████  100%  pass:<P>/<total>  fail:<F>  pending:<X>  conflict:<C>  stuck:<S>
+  ✅ Passed:  <component names>
+  🔴 Stuck:   <component names, or "none">
+  ⚠️  Figma conflicts: <selector list, or "none">
 Report: .claude/pixel-twin/reports/<frameId>-<date>.md  No git changes made.
+```
+
+If `fail > 0` or `stuck > 0`, print the percentage in red-equivalent context (plain text: use `❌` prefix instead of `✅`):
+```
+[pixel-twin] ❌ <pct>% pass — <F> failures remain
 ```

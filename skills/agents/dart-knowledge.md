@@ -188,6 +188,37 @@ Example:
 ]
 ```
 
+⚠️ **`[data-value]` does NOT exist on `Tabs.Tab` buttons.** Do not write selectors like `[data-value='settings']` — this attribute is never rendered on Tab buttons. Use `[aria-controls$='-panel-<tabValue>']` or positional `[role='tablist'] [role='tab']:nth-child(N)` instead.
+
+⚠️ **`keepMounted` gotcha:** Mantine Tabs defaults to `keepMounted={true}`. All tab panels stay in the DOM simultaneously — only the active panel is visible. After clicking to a tab, `waitFor: "[data-testid='my-content']"` may match a hidden panel from another tab. Prefer `[data-state='active'] [data-testid='my-content']`, or verify the bounding box is non-zero, to confirm you're measuring the visible panel.
+
+---
+
+## Combobox / MultiSelect / Select — DOM Selector Reference
+
+**dart v1 uses Mantine v8 underneath** (`@mantine/core@8.x`, NOT v9). Mantine v8 MultiSelect/Select dropdowns use class-based selectors, NOT `data-*` attributes.
+
+**Correct selectors for Mantine v8 dropdowns:**
+
+| Component | DOM class | Notes |
+|-----------|-----------|-------|
+| `MultiSelect` dropdown | `.mantine-MultiSelect-dropdown` | Scoped with testid when `withinPortal:false` |
+| `Select` dropdown | `.mantine-Select-dropdown` | Same scoping rules |
+| `Combobox.Dropdown` | `.mantine-Combobox-dropdown` | Generic combobox dropdown |
+| `DateInput` calendar | `.mantine-Popover-dropdown` | Uses Popover, not Combobox — different class |
+
+**`[data-combobox-dropdown]` does NOT exist in Mantine v8.** This attribute is a Mantine v9 addition. Never use it as a selector for this project.
+
+**When withinPortal:false (MultiSelect default override):** the dropdown renders inside the component's DOM subtree — use scoped selector:
+```
+[data-testid='filter-request-type'] .mantine-MultiSelect-dropdown
+```
+
+**When withinPortal:true** (default for DateInput calendar): popup is in `document.body` — use document-wide selector:
+```
+.mantine-Popover-dropdown
+```
+
 ---
 
 ## Figma Panel `size-full` → Read Parent for Width

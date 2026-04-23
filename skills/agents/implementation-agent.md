@@ -58,9 +58,32 @@ Target properties (N):
 
 ---
 
-### When ITERATION > 1 (mandatory root cause analysis before any code change)
+### When ITERATION > 1 (mandatory Figma re-verification + root cause analysis before any code change)
 
-If `ITERATION > 1`, **do not write any code until you have completed root cause analysis.** Re-guessing without understanding why the previous fix failed is the pattern that drives iterations to 4+.
+If `ITERATION > 1`, **do not write any code until you have completed both Figma re-verification AND root cause analysis.**
+
+**Step 0 — Call `get_design_context` for every FAIL row (non-negotiable):**
+
+For each FAIL row in `PREVIOUS_REVIEW_PATH`, call `get_design_context` with:
+- `nodeId`: the `figmaNodeId` from that Coverage Map row
+- `fileKey`: `FIGMA_FILE_KEY`
+
+Then state explicitly for each:
+```
+[figmaNodeId] / [property]
+  Figma says:      [value extracted from get_design_context response]
+  Coverage Map expected: [expected field]
+  VRA measured:    [actual field]
+  Source is valid: yes | ⚠️ expected was wrong — the correct target is [Figma value]
+```
+
+If `get_design_context` returns a value **different from** the Coverage Map `expected`: the expected value was wrong. Your fix target is the Figma value, not the Coverage Map value. State this explicitly and proceed with the Figma value as the target.
+
+**"The Coverage Map says X" is never a valid justification for a CSS value.** Figma is the only source of truth. If you have not called `get_design_context` for a FAIL row, you do not know the correct target.
+
+If `get_design_context` cannot be called: set the row to `status: "needs-verify"` in your result file and skip it. Do not guess.
+
+**Step 1 — Root cause analysis (after Figma re-verification):**
 
 For each failure in `PREVIOUS_REVIEW_PATH`:
 
@@ -255,7 +278,7 @@ For each result, apply the same tolerance rules the Visual Review Agent uses (fr
 
 **Do not emit the result file until all rows pass.** The Visual Review Agent runs the same checks — any failures you leave in cost a full iteration cycle (Implementation Agent + Visual Review + Code Review). Fixing here costs one script run.
 
-Record self-verified rows in the result file's `selfVerified` array so the Visual Review Agent can skip them if unchanged.
+Record self-verified rows in the result file's `selfVerified` array for diagnostic purposes only.
 
 ---
 
@@ -285,3 +308,5 @@ Write `PROJECT_ROOT/.claude/pixel-twin/impl-result-<COMPONENT_NODE_ID>.json`:
   "notes": "<any dart-specific findings, token surprises, or deviation decisions>"
 }
 ```
+
+⛔ **NEVER update `status` or `actual` fields in the Coverage Map.** The Coverage Map is read-only for the Implementation Agent. Those fields are exclusively managed by the Visual Review Agent. Writing `"status": "pass"` in the Coverage Map during self-verify causes VRA to skip verification on re-runs — defeating the independent check entirely.
