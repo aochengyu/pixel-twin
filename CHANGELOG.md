@@ -5,6 +5,18 @@ All notable changes to pixel-twin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-04-23
+
+Closes remaining systemic gaps: selector re-validation on every VRA run, JSX-first selector assignment in Upgrade/Adopt Mode, and token migration property existence rule.
+
+### Added
+
+- **Step 5a — selector re-validation before every VRA dispatch** (`skills/pixel-twin.md`) — `validate-coverage-map.ts` now runs at the start of Step 5a on every run, not just at Coverage Map creation. Code changes between Coverage Map creation and the next VRA run can make selectors stale; catching them here prevents wasted VRA iterations that measure `null`.
+- **Step 3g — JSX-first selector assignment in Upgrade/Adopt Mode** (`skills/pixel-twin.md`) — in Upgrade and Adopt Mode, selectors must be derived from reading the actual source JSX, not guessed from Figma layer names. For each significant container, a Figma node → JSX element → CSS selector mapping must be stated before the selector is written to the Coverage Map. This is the root cause fix for the "outer `<span>` vs `<strong>` children" class of mistakes.
+- **Phase 5 — CSS property existence rule** (`skills/agents/implementation-agent.md`) — before writing or keeping any CSS property (especially during token migrations), the agent must verify the property itself exists in Figma. "It was there before" is not a valid reason to keep a property. This closes the gap where `padding-bottom: 1.5rem` → `var(--mantine-spacing-md)` migration preserved a property that Figma never specified.
+
+---
+
 ## [0.6.0] - 2026-04-23
 
 Systematic prevention of low-level mistakes: selector validation, data requirements, DOM mapping enforcement, and pseudo-element handling.

@@ -386,6 +386,22 @@ For Category A parent nodes (auto-named): the children use `meaningful-ancestor-
 
 If data-testid does not yet exist (Build Mode), record the intended testid value — Implementation Agent will add it to the code.
 
+**⛔ Upgrade Mode / Adopt Mode — read JSX before assigning selectors:**
+
+In Build Mode, no source file exists yet, so selectors are assigned from Figma node names. In Upgrade and Adopt Mode, the component already exists — selectors MUST be derived from the actual DOM structure, not guessed from Figma layer names.
+
+For each significant container in Upgrade/Adopt Mode:
+1. Locate the source file (grep for the component name or known `data-testid`)
+2. Read the JSX
+3. For every Figma node being assigned a selector, state explicitly:
+   ```
+   Figma node "<name>" → JSX: <element type and key props> → selector: <CSS selector>
+   Sub-elements note: <any children with different styling than the parent>
+   ```
+4. Only after this mapping is written: assign the selector to the Coverage Map row
+
+Selectors written without reading the JSX are guesses. Guessed selectors are the primary cause of stale selector failures and wrong-element targeting.
+
 ### 3h — Write Coverage Map
 
 Write `PROJECT_ROOT/.claude/pixel-twin/coverage-map-<frameId>.json`. Required top-level fields: `frameId`, `figmaUrl`, `lastVerified: null`, `figmaDiscrepancies: []`, and a `prerequisites` block with:
@@ -490,6 +506,20 @@ For each component (`nodeId`, `figmaName`), run one iteration cycle:
 ### 5a — Gate check
 
 Confirm `coverage-map-<frameId>.json` exists, has non-zero rows, and self-check from Step 3h passed. If missing: return to Step 3. Never implement without a Coverage Map.
+
+**Selector re-validation (mandatory on every run, not just Coverage Map creation):**
+
+Run `validate-coverage-map.ts` now, even if the Coverage Map was validated in Step 3h-validate. Code changes between Coverage Map creation and this run may have made selectors stale.
+
+```bash
+npx tsx <PIXEL_TWIN_ROOT>/scripts/validate-coverage-map.ts \
+  --coverage-map <coverage-map-path> \
+  [--auth-helper "<AUTH_HELPER_PATH>"]
+```
+
+- `❌ not-found`: fix the selector before dispatching any agent. Do NOT proceed with a Coverage Map that has unresolvable selectors — VRA will measure `null` and the iteration is wasted.
+- `⚠️ multiple`: verify by hand which element is the intended target; tighten the selector if ambiguous.
+- All `✅`: proceed.
 
 **Agent spawn pattern** (applies to 5a-impl, 5b, 5c): Read the agent md file → `Agent(model: X, prompt: file content + inputs block)`.
 

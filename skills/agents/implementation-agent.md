@@ -261,6 +261,24 @@ For dart/Mantine component instances:
 
 For custom components and layout containers: full CSS verification applies.
 
+### CSS property existence — verify against Figma, not against existing code
+
+Before writing or keeping any CSS property, ask: **does Figma show this property on this element?**
+
+This applies in two situations:
+
+**1. Token/value migrations** (changing a property's value, e.g. `1.5rem` → `var(--mantine-spacing-md)`):
+- Do not migrate the value and assume the property should exist
+- First verify: does Figma have this property on this element?
+- If Figma does not show it: **remove the property entirely** — do not migrate it
+- "It was there before" is not a valid reason to keep a CSS property
+
+**2. Any fix iteration**:
+- If a FAIL row is for a property whose Coverage Map `expected` came from code (not Figma): the expected value may be wrong AND the property may not belong there at all
+- Check Figma first (via Phase 1 Step 0's `get_design_context`) before deciding whether to change the value or remove the property
+
+The cost of a property that shouldn't exist is invisible until a designer reviews the output. Figma is the authoritative source for whether a property should exist, not the previous version of the code.
+
 ### Surgical changes (Upgrade Mode / re-iterations)
 
 Only change the specific properties in FAIL rows. Do not reformat, reorganize, or improve other parts of the file unless directly required.
