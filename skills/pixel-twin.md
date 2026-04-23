@@ -37,10 +37,13 @@ If this block cannot be produced (no `get_design_context` response for the node)
 
 ---
 
-## Dependencies (the only three you have)
+## Dependencies (the only four you have)
 
 - **Figma MCP**: `get_metadata`, `get_design_context`
 - **Scripts**: `npx tsx <PIXEL_TWIN_ROOT>/scripts/*.ts`
+  - `computed-styles.ts` — measure CSS properties from live DOM
+  - `css-variables.ts` — resolve CSS token values
+  - `validate-coverage-map.ts` — dry-run all Coverage Map selectors against live DOM before VRA
 - **Claude Code Agent tool**: spawn sub-agents by reading `skills/agents/*.md` and passing the content as the Agent prompt
 
 `PIXEL_TWIN_ROOT` = the directory containing `skills/pixel-twin.md` minus the `skills/` segment — i.e. the root of the pixel-twin repo. Locate it at startup by finding where this skill file lives.
@@ -331,6 +334,27 @@ Before writing any row's `expected` value, you MUST have called `get_design_cont
 
 If you cannot call `get_design_context` (no network, tool error): set `expected: null` and `status: "needs-verify"`. DO NOT guess.
 
+**⛔ Pseudo-element detection rule:**
+
+If `get_design_context` returns CSS that implements a visual effect via `::after` or `::before` (common patterns: underline indicators, overlays, decorative borders), do NOT write Coverage Map rows for the pseudo-element's properties — `computed-styles.ts` cannot measure them.
+
+Instead:
+1. Write rows for the **parent element's measurable properties** that are prerequisites for the pseudo-element to work: `position` (must be `relative`), `z-index` (if stacking matters)
+2. Add a `note` field explaining the visual effect is via `::after`/`::before`
+3. The `expected` for `border-bottom-width` on the parent should be `"0px"` (or `"none"`) if the visual border is on the pseudo-element, not the element itself
+
+Example (tab active indicator via `::after`):
+```json
+{
+  "selector": ".mantine-Tabs-tab[data-active]",
+  "property": "border-bottom-width",
+  "expected": "0px",
+  "note": "Visual blue indicator implemented via ::after{height:1.5px}; element border is none"
+}
+```
+
+This prevents the mistake of writing `expected: "1.5px"` for a property that will always measure `0px`.
+
 ### 3f — CSS Variable Extraction
 
 For every unique `cssVar` collected in 3e, run once per URL:
@@ -364,7 +388,18 @@ If data-testid does not yet exist (Build Mode), record the intended testid value
 
 ### 3h — Write Coverage Map
 
-Write `PROJECT_ROOT/.claude/pixel-twin/coverage-map-<frameId>.json`. Required top-level fields: `frameId`, `figmaUrl`, `lastVerified: null`, `figmaDiscrepancies: []`, and a `prerequisites` block with: `url` (inferred app URL), `auth` (auth helper path or null), `waitFor` (e.g. `"tbody tr"` if table visible, or key selector), `viewport` (from Figma frame dimensions), `stableCondition: "networkidle"`, `setupInteractions: []`, `figmaScreenshots` (map of `nodeId → { path, width, height }` from Phase 1 of Step 3d-containers).
+Write `PROJECT_ROOT/.claude/pixel-twin/coverage-map-<frameId>.json`. Required top-level fields: `frameId`, `figmaUrl`, `lastVerified: null`, `figmaDiscrepancies: []`, and a `prerequisites` block with:
+
+| Field | Value |
+|---|---|
+| `url` | inferred app URL |
+| `auth` | auth helper path or null |
+| `waitFor` | key selector (e.g. `"tbody tr"`) |
+| `viewport` | from Figma frame dimensions |
+| `stableCondition` | `"networkidle"` |
+| `setupInteractions` | `[]` (filled when interactive states are added) |
+| `figmaScreenshots` | map of `nodeId → { path, width, height }` from Step 3d-containers Phase 1 |
+| `dataRequirements` | **required** — describe what data state the URL must be in for every component in this frame to render correctly. If any component only appears with specific data (e.g. exception badge only shows on exception requests, empty state only shows when list is empty), name the exact URL and why. Example: `"Use request 8252 — practice_certification_needed exception. Non-exception requests will not render the exception badge."` If the frame has no data-dependent states, write `"none"`. |
 
 Each row: `{ selector, figmaNodeId, property, figmaValue, dartV1Value, cssVar, figmaConflict: false, expected, actual: null, status: "pending", tolerance }`.
 
@@ -375,6 +410,25 @@ Tolerance keys are in dart-knowledge.md → **Coverage Map Property Matrix → T
 **Completeness self-check (mandatory before Step 5) — check all 4 Gates:**
 
 Run the Gate checks (Gates 2–5). Print `[pixel-twin] Coverage Map self-check: text N/M, bbox N/M, states N/M, sub-components N/M`. Fix any ratio that is not N/N before proceeding.
+
+### 3h-validate — Selector dry-run (mandatory before Step 3i)
+
+After writing the Coverage Map and passing the self-check, run:
+
+```bash
+npx tsx <PIXEL_TWIN_ROOT>/scripts/validate-coverage-map.ts \
+  --coverage-map <coverage-map-path> \
+  [--auth-helper "<AUTH_HELPER_PATH>"]
+```
+
+Print the output. For each `❌ not-found` selector:
+1. Re-read the source JSX to find the correct selector
+2. Update the Coverage Map row's `selector` field
+3. Re-run `validate-coverage-map.ts` until all selectors are `✅` or `⚠️`
+
+For `⚠️ multiple` results: verify the selector targets the intended element (not a sibling or ancestor). Tighten the selector if it could match the wrong element.
+
+**Do not proceed to Step 3i until `validate-coverage-map.ts` exits 0 (no `❌` rows).**
 
 ### 3i — Initialize state files
 

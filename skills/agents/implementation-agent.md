@@ -156,6 +156,26 @@ Always read the source file before writing. If it does not exist yet (Build Mode
 - CSS module vs inline style conventions
 - How data-testid is applied
 
+### Phase 3a — Figma node → DOM element mapping (mandatory for Upgrade Mode and re-iterations)
+
+After reading the source file, produce an explicit mapping table for every Coverage Map row you are about to implement or fix:
+
+```
+Figma node "<figmaName>" (nodeId: <id>)
+  → JSX element: <span key={...}>{item.label}</span>
+  → DOM selector: .mantine-Breadcrumbs-root > span:last-child
+  → Children: contains <strong> ("Patient", "eRequest") with fw=500; outer <span> is fw=400
+  → Correct selector targets: the outer <span> itself, NOT its <strong> children
+```
+
+Rules for this mapping:
+1. The selector in the Coverage Map must match the **exact** DOM element that corresponds to the Figma node — not its parent, not its children, not a sibling
+2. For any text element, identify whether its styling applies to the element itself or to child elements (e.g. `<strong>`, `<em>`, `<span>`) — they are different DOM targets
+3. For Mantine/dart components, identify the root element vs internal sub-elements — internal sub-elements cannot be reliably targeted with CSS overrides
+4. If a Coverage Map selector would match the wrong element, **update the selector in the Coverage Map** before writing any fix
+
+This mapping table is the proof that you understand the DOM structure before writing code. Without it, you are guessing.
+
 ---
 
 ## Phase 3.5 — Outside-in verification (mandatory before writing any JSX structure)

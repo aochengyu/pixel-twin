@@ -5,6 +5,20 @@ All notable changes to pixel-twin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-04-23
+
+Systematic prevention of low-level mistakes: selector validation, data requirements, DOM mapping enforcement, and pseudo-element handling.
+
+### Added
+
+- **`validate-coverage-map.ts`** — new script that dry-runs every CSS selector in a Coverage Map against the live DOM before VRA runs. Reports `✅ found / ⚠️ multiple / ❌ not-found` for each selector. `--update` flag marks not-found rows as `needs-verify` in the map. Exits 1 if any selector returns 0 elements. Eliminates the class of bugs where stale selectors reach VRA and produce null measurements.
+- **Step 3h-validate — mandatory selector dry-run after Coverage Map is written** (`skills/pixel-twin.md`) — orchestrator must run `validate-coverage-map.ts` after writing the Coverage Map and before proceeding to 3i. No `❌` rows allowed before moving on.
+- **`prerequisites.dataRequirements` field (required)** (`skills/pixel-twin.md`) — Coverage Map `prerequisites` must now include `dataRequirements`: a description of exactly what data state the URL must be in for all components to render correctly (e.g. "Use request 8252 — exception request required for exception badge to appear"). Prevents wrong-URL measurements that silently measure the wrong UI state.
+- **Phase 3a — Figma node → DOM element mapping table** (`skills/agents/implementation-agent.md`) — after reading the source file, agent must produce an explicit table mapping each Figma node to its exact JSX element and DOM selector, including sub-element notes (e.g. `<strong>` children vs outer `<span>`). This table is required before any fix is written. Prevents the class of bugs where the wrong DOM element is targeted.
+- **Pseudo-element detection rule in Step 3e** (`skills/pixel-twin.md`) — when `get_design_context` shows `::after`/`::before` for visual effects, Coverage Map rows must target the parent's measurable properties (`position`, `z-index`, `border-bottom: none`) instead of the pseudo-element. Prevents `expected: "1.5px"` on a property that will always measure `0px`.
+
+---
+
 ## [0.5.0] - 2026-04-23
 
 Process hardening: mandatory Figma re-verification before every CSS fix, Gate 8, and `--headed` flag for computed-styles.
