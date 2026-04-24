@@ -4,7 +4,7 @@ A Claude Code skill that automates the frontend UI implementation loop — from 
 
 The name says it all: when the skill works, the running app and the Figma mock are indistinguishable side-by-side. They are pixel twins.
 
-**Status: v0.2.0 — pre-flight QA, mandatory property matrix, and dart auto-detection complete. Threshold calibration and CI gate pending. See [`CHANGELOG.md`](CHANGELOG.md) for current feature status.**
+**Status: v0.7.0 — selector re-validation, JSX-first selectors, Figma citation gates, and CSS property existence rule implemented. Threshold calibration and CI gate pending. See [`CHANGELOG.md`](CHANGELOG.md) for current feature status.**
 
 ---
 
@@ -65,6 +65,9 @@ skills/
     dart-knowledge.md            # Dart V1 design system reference
 scripts/
   computed-styles.ts             # Batch CSS computed styles extractor (Playwright)
+  validate-coverage-map.ts       # Dry-run all Coverage Map selectors against live DOM
+  css-variables.ts               # Resolve CSS token values from running app
+  pixelmatch-compare.ts          # Screenshot pixel diff utility
   bounding-boxes.ts              # Bounding box comparison utility
   screenshot.ts                  # Playwright screenshot utility
   auth-integrated-roi.ts         # Auth helper for integrated-roi project
@@ -102,6 +105,11 @@ See [`docs/pixel-twin-v2-design.md`](docs/pixel-twin-v2-design.md) for the curre
 |---------|-------|--------|
 | v0.1.0 | First complete implementation — all four agents, Coverage Map architecture, closed verify-fix loop | Released 2026-04-10 |
 | v0.2.0 | Pre-flight interactive QA, mandatory property matrix, dart auto-detection, color normalization, root cause analysis | Released 2026-04-21 |
+| v0.3.0 | Figma-first Coverage Map building, screenshot comparison, SVG/image color, VRA interactive state format | Released 2026-04-22 |
+| v0.4.0 | IA/VRA ownership boundary, Mantine v8 tab selector, `--wait-for` timing fixes | Released 2026-04-22 |
+| v0.5.0 | Gate 8 citation block, mandatory Figma re-verify before VRA dispatch, `--headed` flag | Released 2026-04-23 |
+| v0.6.0 | `validate-coverage-map.ts`, `dataRequirements` field, JSX-first selectors, pseudo-element rule, Phase 3a DOM mapping | Released 2026-04-23 |
+| v0.7.0 | Selector re-validation before every VRA dispatch, CSS property existence rule in token migrations | Released 2026-04-23 |
 | v1.0.0 | Stable release — Build/Upgrade modes calibrated, CI gate enforced, threshold calibrated | Planned |
 | v2.0.0 | Interactive states, animations, form validation | Planned |
 | v3.0.0 | Responsive/breakpoints, Storybook, multi-design-system | Planned |

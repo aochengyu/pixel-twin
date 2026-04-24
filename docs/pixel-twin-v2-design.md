@@ -1,7 +1,7 @@
 # pixel-twin v2 Design Spec
 
 **Date:** 2026-04-13
-**Status:** Implemented — v2 is in production as of 2026-04-21. See CHANGELOG for post-spec additions (pre-flight QA, mandatory property matrix, root cause analysis loop, color normalization, childrenTestids metric).
+**Status:** Implemented — v2 is in production. See CHANGELOG for the full version history. Post-spec additions through v0.7.0 are documented in Section 20 below.
 
 ---
 
@@ -370,3 +370,52 @@ FIGMA_CONFLICT  1 property (logged for designer, not blocking)
 ```
 
 Full report written to `reports/<frameId>-report.md`.
+
+---
+
+## 20. Post-Spec Additions (v0.3.0 – v0.7.0)
+
+These additions were made after the initial v2 spec was written. They are canonical — treat them as part of this spec.
+
+### v0.3.0 — Figma-first Coverage Map building + screenshot comparison (2026-04-22)
+
+- **`imagePixelColor` DOM metric** — canvas-based center-pixel sampling for `<img>` elements; returns `rgb(R,G,B)`, `"cross-origin"`, `"not-an-img"`, or `"not-loaded"`.
+- **VRA Step 4c — Screenshot comparison** — after CSS verification, VRA takes a browser screenshot and diffs it against the stored Figma screenshot using `pixelmatch-compare.ts`. Thresholds: ≤1% pass, 1–5% warn, >5% fail.
+- **Gate 7** — Orchestrator must call `get_screenshot` on every significant container during Step 3d-containers Phase 1; paths stored in `prerequisites.figmaScreenshots`.
+- **Step 3d-containers: Figma-first two-phase structure** — Phase 1 collects all `get_design_context` + `get_screenshot` results into `figma-data-<frameId>.json`. Phase 2 reads only from that file when writing `expected` values. Never interleave.
+- **Gate 6** — `expected` values must be traceable to `get_design_context` output. Every row must carry a `figmaSource` annotation.
+- **VRA interactive state grouping** — per-row `state` + `setupInteractions` fields replace the old `verificationMethod: "interactive"` split.
+
+### v0.4.0 — Bug fixes (2026-04-22)
+
+- **IA must not update Coverage Map `status`/`actual`** — those fields are VRA-only. IA writing `"status": "pass"` makes VRA a no-op on re-runs. Hard rule added in implementation-agent.md Phase 7.
+- **Mantine v8 `[data-value]` warning** — `Tabs.Tab` buttons in Mantine v8 do NOT render a `[data-value]` attribute. Use `[data-active]` instead.
+- **`keepMounted` gotcha** — all Mantine tab panels remain in the DOM by default. `waitFor: "[data-testid='content']"` can match a hidden panel. Use `[data-state='active']` or a bounding-box check.
+- **`--wait-for` runs AFTER `--interactions`** — documented in visual-review-agent.md.
+
+### v0.5.0 — Mandatory Figma verification gates (2026-04-23)
+
+- **Gate 8 — Figma citation block required before any CSS write** — every proposed fix must print a citation block before code is written:
+  ```
+  figma nodeId:  <id>
+  figma says:    <value from get_design_context>
+  DOM measured:  <actual>
+  fix:           <what changes and why>
+  ```
+  If the block cannot be produced, the fix is blocked and the row is set to `needs-verify`.
+- **Step 5d — mandatory Figma re-verification before dispatching Implementation Agent** — when VRA reports failures, the Orchestrator must call `get_design_context` on each failing row's `figmaNodeId` and print a citation block before looping back. If Figma returns a different value than Coverage Map `expected`, the map is corrected first.
+- **Implementation Agent Phase 1 Step 0 (ITERATION > 1)** — call `get_design_context` for every FAIL row before root cause analysis. "The Coverage Map says X" is not valid — Figma is the only source of truth.
+
+### v0.6.0 — Selector reliability + process hardening (2026-04-23)
+
+- **`validate-coverage-map.ts`** — new script that dry-runs every CSS selector in a Coverage Map against the live DOM before VRA runs. Reports ✅ found / ⚠️ multiple / ❌ not-found. `--update` flag marks not-found rows as `needs-verify`. Exits 1 if any selector returns 0 elements.
+- **Step 3h-validate** — Orchestrator must run `validate-coverage-map.ts` after writing the Coverage Map and before proceeding to Step 3i. No ❌ rows allowed before moving on.
+- **`prerequisites.dataRequirements` field (required)** — Coverage Map prerequisites must include a description of the exact data state the URL must be in for all components to render correctly (e.g. "Use request 8252 — exception request required for exception badge to appear").
+- **Phase 3a — Figma node → DOM element mapping table** — after reading the source file, Implementation Agent must produce an explicit table mapping each Figma node to its exact JSX element and DOM selector before writing any fix.
+- **Step 3g — JSX-first selector assignment (Upgrade/Adopt Mode)** — selectors must be derived from reading actual source JSX, not guessed from Figma layer names. For each significant container, a Figma node → JSX element → CSS selector mapping must be stated before the selector is written to the Coverage Map.
+- **Pseudo-element detection rule (Step 3e)** — when `get_design_context` shows `::after`/`::before` for visual effects, Coverage Map rows must target the parent's measurable properties instead of the pseudo-element.
+
+### v0.7.0 — Selector re-validation on every VRA run + CSS property existence (2026-04-23)
+
+- **Step 5a — selector re-validation before every VRA dispatch** — `validate-coverage-map.ts` now runs at the start of Step 5a on every run, not just at Coverage Map creation. Code changes between Coverage Map creation and the next VRA run can make selectors stale.
+- **Phase 5 — CSS property existence rule** — before writing or keeping any CSS property (especially during token migrations), the agent must verify the property itself exists in Figma. "It was there before" is not a valid reason to keep a property. This applies to both token migrations (changing a value like `1.5rem` → `var(--mantine-spacing-md)`) and fix iterations.

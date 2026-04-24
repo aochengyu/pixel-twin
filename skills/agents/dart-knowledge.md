@@ -62,9 +62,9 @@ Gap shortcuts: `gap="xs"` = 10px, `gap="sm"` = 12px, `gap="md"` = 16px, `gap="lg
 
 ---
 
-## Table (`<Table>`) — Confirmed Gotchas
+## Table — Confirmed Gotchas
 
-### Gotcha 1: Sort click handlers are NOT wired
+### Sort click handlers are NOT wired
 dart renders `<th>` with no `onClick`. Always wire manually in every header render function:
 ```tsx
 <Group
@@ -73,7 +73,7 @@ dart renders `<th>` with no `onClick`. Always wire manually in every header rend
 >
 ```
 
-### Gotcha 2: `meta.column.width` is ignored — use CSS nth-child
+### `meta.column.width` is ignored — use CSS nth-child
 dart's `Table` component reads `meta.column` only for `isSortable`. The `width` field (e.g., `width: "16rem"`) is dead code — dart never passes it to `<th>` or `<td>` in the DOM.
 
 To set column widths, use CSS nth-child selectors scoped to the table container:
@@ -87,7 +87,7 @@ To set column widths, use CSS nth-child selectors scoped to the table container:
 ```
 Add a `data-tab-id={tabId}` attribute to the outer Box wrapping `<Table>` to enable tab-aware column widths.
 
-### Gotcha 3: `<td>` default padding is `8px 16px` — overridable via CSS
+### `<td>` default padding is `8px 16px` — overridable via CSS
 dart applies `padding: 8px 16px` to every `<td>`. If Figma specifies `px-[8px]`, override in CSS:
 ```css
 .tableContainer td {
@@ -101,7 +101,7 @@ Do NOT add `py` or `px` to inner `Group`/`Stack` elements — td padding is the 
 
 Always use `h="100%"` on inner cell elements for vertical centering.
 
-### Gotcha 4: Row backgrounds must go on `<td>` via `:has()`, not inner divs
+### Row backgrounds must go on `<td>` via `:has()`, not inner divs
 If you apply `background-color` to an inner `<Stack>` or `<Group>`, the background only fills the content area (td height minus padding), not the full row height. This creates visible gaps at row edges.
 
 Correct pattern:
@@ -119,7 +119,7 @@ td:has(.negativeRowBg) {
 
 ## Badge — Confirmed Gotchas
 
-### Gotcha 5: `filled` variant overrides `<Text c={...}>` with white
+### `filled` variant overrides `<Text c={...}>` with white
 dart/Mantine Badge with the default `filled` variant applies `color: white` to child text via a class-based CSS rule. A `<Text c="...">` prop inside Badge uses a CSS custom property that the filled-variant rule defeats.
 
 **Wrong:**
@@ -133,21 +133,28 @@ dart/Mantine Badge with the default `filled` variant applies `color: white` to c
 </Badge>
 ```
 
-### Gotcha 6: Badge text font-size and line-height
+### Badge text font-size and line-height
 Figma badge text spec: `sys/fontSize/14` (14px) / `sys/fontSize/20` (20px).
 Use `size="md"` (14px). The default line-height for `size="md"` is 20px — do NOT add `lh="sm"`.
 Never use `size="xs"` (10px) or `size="sm"` (12px) for badges.
 
-### Gotcha 7: Badge transparent prop removes background — white text becomes invisible
+### `transparent` prop removes background — white text becomes invisible
 **Never pass** `bg="transparent"` or a `transparent` prop that sets `bg="transparent"` on a filled Badge.
 With the default `filled` variant, Badge text is white (from Mantine CSS). If `bg="transparent"`,
 the background disappears but text stays white → invisible on a light table background.
 For progress column in a table: do NOT pass `transparent`. Render the filled colored badge directly.
 
-### Gotcha 8: Custom badge colors — use explicit bgColor, not the dart colorMap
+### Custom badge colors — use explicit bgColor, not the dart colorMap
 dart Badge `color` prop (neutral/success/warning/error) does NOT reliably match Figma's filled badge colors.
 For badges with custom colors, always use explicit `bg={config.bgColor}` with `style={{ color: config.textColor }}`.
 Always source the hex values from your Figma file — never guess or use default dart color names.
+
+### `filled` variant adds a 1px transparent border → +2px bounding height
+`variant="filled"` renders a 1px `border` on the Badge root (transparent by default). Visually invisible against a colored background, but it adds 2px to the element's bounding height vs the Figma spec.
+
+**Fix:** `style={{ border: "none" }}` on the Badge element.
+
+**Detection rule:** if a Badge's measured `boundingHeight` is 2px taller than Figma, check `border-width` first — it will be `1px`. Zero it with `style={{ border: "none" }}`.
 
 ---
 
@@ -169,7 +176,9 @@ type Props = React.ComponentProps<typeof Text> & {
 
 ---
 
-## Tabs — Stable Interaction Selectors
+## Tabs — Stable Selectors & Gotchas
+
+### Stable interaction selectors
 
 dart's Tabs component uses Mantine's internal ID generation (`mantine-<random>-tab-<value>`) for tab element IDs. These IDs are random and unstable across page loads — never use them in selectors.
 
@@ -191,6 +200,50 @@ Example:
 ⚠️ **`[data-value]` does NOT exist on `Tabs.Tab` buttons.** Do not write selectors like `[data-value='settings']` — this attribute is never rendered on Tab buttons. Use `[aria-controls$='-panel-<tabValue>']` or positional `[role='tablist'] [role='tab']:nth-child(N)` instead.
 
 ⚠️ **`keepMounted` gotcha:** Mantine Tabs defaults to `keepMounted={true}`. All tab panels stay in the DOM simultaneously — only the active panel is visible. After clicking to a tab, `waitFor: "[data-testid='my-content']"` may match a hidden panel from another tab. Prefer `[data-state='active'] [data-testid='my-content']`, or verify the bounding box is non-zero, to confirm you're measuring the visible panel.
+
+### Active indicator border: `!important` required; `[data-active]` not `[data-active="true"]`
+
+Mantine's own stylesheet resets `border-bottom-width` to `1px` with high specificity. To override the active tab indicator width, `!important` is required on the custom rule.
+
+In Mantine v8, boolean attributes like `data-active` render with no value in the DOM — `<button data-active>`, NOT `<button data-active="true">`. Selectors using `[data-active="true"]` never match.
+
+```css
+/* Correct */
+[data-testid="my-tabs"] [data-active] {
+  border-bottom-width: 2px !important;
+}
+/* Wrong — never matches in Mantine v8 */
+[data-active="true"] { ... }
+```
+
+### Active indicator: dual `::after` + `z-index` on the tab element, not on `::after`
+
+`bottom: -1.5px` and `top: 100%` patterns fail in Safari. The stable cross-browser pattern uses dual `::after` pseudo-elements with `bottom: 0` and places `z-index: 1` on the **tab element itself** — not on `::after`.
+
+```css
+/* Tab list bottom border */
+[data-testid="my-tabs"] [role="tablist"]::after {
+  content: "";
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 2px;
+  background: var(--border-default);
+}
+/* Active tab indicator — must appear AFTER the tablist rule in the stylesheet */
+[data-testid="my-tabs"] [role="tablist"] [data-active]::after {
+  content: "";
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 2px;
+  background: var(--border-active);
+}
+/* z-index on the TAB ELEMENT — not on ::after */
+[data-testid="my-tabs"] [role="tablist"] [data-active] {
+  z-index: 1;
+}
+```
+
+**Why `z-index` on the element, not `::after`:** `z-index` on a `::after` is scoped to that element's stacking context and cannot escape the parent's `::after`. Setting `z-index: 1` on the tab element creates a new stacking context that sits above the tablist `::after`.
 
 ---
 
@@ -227,9 +280,9 @@ When a Figma panel uses `size-full`, no explicit width is shown. Call `get_desig
 
 ---
 
-## Form / Detail Field Labels — Confirmed Gotcha
+## Form Components — Confirmed Gotchas
 
-### Gotcha 9: Field labels are 14px medium dark, NOT gray/small
+### Field labels: 14px medium dark, NOT gray/small
 
 The most common mistake: using `size="sm" c="var(--text-contrast-low)"` (12px gray) for field labels in detail/form views. Figma specifies 14px medium dark for all field labels.
 
@@ -242,11 +295,58 @@ The most common mistake: using `size="sm" c="var(--text-contrast-low)"` (12px gr
 <Text size="md" fw={500} c="var(--text-on-base, #020202)">{label}</Text>
 ```
 
+### Form wrapper injects margin even without a label
+
+Mantine form components — `Radio.Group`, `TextInput`, `Select`, `Checkbox.Group`, `Textarea`, etc. — wrap their content in an `Input.Wrapper` → inner Box structure. The inner Box (with `role="radiogroup"`, `role="combobox"`, etc.) receives margin from Mantine's InputWrapper spacing CSS **even when no `label` or `description` prop is supplied**.
+
+**Observed values:**
+- `Radio.Group` inner `[role="radiogroup"]` → `margin-top: 8px; margin-bottom: 8px`
+- Other form components may vary; always measure before assuming zero.
+
+**Fix pattern:**
+```css
+.container :global([role="radiogroup"]) {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+```
+
+**Enforcement:** for every dart/Mantine form component used labelless inside a custom flex layout, add Coverage Map rows:
+```json
+{ "selector": "...[role='radiogroup']", "property": "margin-top", "expected": "0px" }
+{ "selector": "...[role='radiogroup']", "property": "margin-bottom", "expected": "0px" }
+```
+
+### Radio label `padding-left` stacks with gap — zero it out
+
+Mantine's Radio component adds internal `padding-left` on the label element to space the label from the radio control. When you also set a `gap` on the Radio.Group body, these stack and over-space the layout.
+
+**Fix pattern:**
+```css
+.container :global(.mantine-Radio-label) {
+  padding-left: 0;
+}
+.container :global(.mantine-Radio-body) {
+  gap: 8px; /* match Figma spec */
+}
+```
+
+### Never override `dart-v1_*` internal CSS class names without user approval
+
+dart components have internal implementation class names (e.g., `dart-v1_Badge__root`). These are private API — their names can change in any dart release.
+
+When a Figma spec cannot be achieved through the dart component's public props API, **flag the gap** to the engineer and wait for a decision. Only override through:
+1. Public dart/Mantine props (`gap`, `padding`, `size`, etc.)
+2. Scoped CSS targeting Mantine's stable public classes (`.mantine-Badge-root`, `.mantine-Stack-root`)
+3. CSS targeting the component's own wrapper via `data-testid`
+
+If none of these work, report the limitation and ask the user whether to accept the delta or find an alternative component.
+
 ---
 
 ## Breadcrumbs — Confirmed Gotchas
 
-### Gotcha 10: Never rely on Breadcrumbs `size` prop for font-size — use explicit CSS
+### Never rely on `size` prop for font-size — use explicit CSS
 
 The dart Breadcrumbs `size` prop applies dart's text classes to each breadcrumb item. For `size="lg"`, the class sets `font-size: var(--mantine-font-size-lg) = 1rem = 16px` and `line-height: var(--mantine-line-height-lg) = 1.5rem = 24px`.
 
@@ -292,7 +392,7 @@ For active breadcrumb items with mixed text sizes (e.g., a bold label at 14px in
 
 ## Project Setup — Confirmed Gotcha
 
-### Gotcha 11: app.css must import the dart design system font
+### `app.css` must import the dart design system font
 
 dart's MantineProvider sets `--mantine-font-family` to the design system font (e.g. `"Geist"`). However, Mantine only applies this to components via `font-family: var(--mantine-font-family)`. Native elements (`html`, `body`) still inherit from the body font-family — this must be explicitly set in `app.css`.
 
@@ -315,6 +415,41 @@ html, body {
 ```
 
 Any stale `font-family: "OldFont"` declarations in CSS modules should be replaced with `font-family: inherit` or removed entirely.
+
+---
+
+## CSS Implementation Rules
+
+Rules that apply whenever Implementation Agent writes or modifies CSS. These are not Mantine-specific — they apply to all CSS in the project.
+
+### Cascade order: modifier class must appear AFTER base class in the stylesheet
+
+JSX `className` order is irrelevant — the browser applies whichever rule appears later in the stylesheet. If `.modifierClass` is declared before `.baseClass` in the CSS file, `.baseClass` always wins regardless of JSX order.
+
+**Rule:** always verify that modifier/override CSS rules appear later in the file than the base class they override. If a CSS override is not working and specificity is equal, check file position before adding `!important`.
+
+### `bottom: 0` on `::after` is displaced by `padding-bottom`
+
+`bottom: 0` positions `::after` relative to the element's padding-box (which includes padding). Any `padding-bottom` on the containing element pushes the `::after` upward by the same amount, breaking pixel-perfect alignment.
+
+**Rule:** never add `padding-bottom` as a visual spacer on elements that have `::after { bottom: 0 }`. Use a separate wrapper element for the spacing instead.
+
+### Always include hex fallback in `var(--token, #fallback)`
+
+Missing fallbacks silently produce wrong colors when the token variable is undefined (during SSR, before the design system CSS loads, or in test environments). The hex fallback comes from the Figma `get_design_context` output — the `var(--token, fallback)` pattern always shows the resolved value.
+
+```css
+/* Wrong — silent failure if token undefined */
+color: var(--text-on-base);
+/* Correct — always include hex from Figma */
+color: var(--text-on-base, #020202);
+```
+
+### Run `css-variables.ts` before picking any token name
+
+Token names cannot be inferred from Figma layer names or path. `--graphic-contrast-low` ≠ `#c7ccd4` — never assume the resolved value. Run `css-variables.ts --vars "token-name"` on the EXACT token name from Figma's `var(--token-name, fallback)` output to confirm the value before using it.
+
+If `css-variables.ts` returns empty string, the token is not defined in the current design system build — use the `fallback` value directly instead.
 
 ---
 
@@ -360,37 +495,6 @@ Used by pixel-twin Step 3b-dart for auto-detection. A Figma node whose name cont
 | `StatusTag` | Datavant custom — wraps dart Badge |
 | `SidebarFooter` | Datavant custom |
 | `Chip`, `ChipGroup` | |
-
----
-
-## Form Component Wrapper Margins — Confirmed Gotcha
-
-### Gotcha 12: Mantine form components inject margin/padding on their inner wrapper even without a label
-
-Mantine form components — `Radio.Group`, `TextInput`, `Select`, `Checkbox.Group`, `Textarea`, etc. — wrap their content in an `Input.Wrapper` → inner Box structure. The inner Box (with `role="radiogroup"`, `role="combobox"`, etc.) receives margin from Mantine's InputWrapper spacing CSS, even when no `label` or `description` prop is supplied.
-
-**Observed values:**
-- `Radio.Group` inner `[role="radiogroup"]` → `margin-top: 8px; margin-bottom: 8px`
-- Other form components may vary; always measure before assuming zero.
-
-**Why it happens:** Mantine's `Input.Wrapper` CSS applies spacing to accommodate optional label/description slots. When these slots are empty, the margin remains. The outer `.mantine-InputWrapper-root` wrapper has no margin, so it is invisible in DevTools box-model until you inspect the child.
-
-**Fix pattern — anchor to the SidebarFooter container and reset globally:**
-```css
-.container :global([role="radiogroup"]) {
-  margin-top: 0;
-  margin-bottom: 0;
-}
-```
-
-**Long-term rule: whenever pixel-twin implements any Mantine/dart form component inside a custom flex layout WITHOUT a label/description, add `[role="radiogroup"]` / inner-wrapper margin rows to the Coverage Map and override to 0 in CSS.** Do not wait for a visual diff — measure it proactively.
-
-**pixel-twin enforcement:** The Implementation Agent must, for every dart/Mantine form component used labelless, add rows:
-```json
-{ "selector": "...[role='radiogroup']", "property": "margin-top", "expected": "0px" }
-{ "selector": "...[role='radiogroup']", "property": "margin-bottom", "expected": "0px" }
-```
-to the Coverage Map. Missing these rows = invisible spacing bug.
 
 ---
 
