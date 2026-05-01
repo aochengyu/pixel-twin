@@ -5,6 +5,26 @@ All notable changes to pixel-twin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-05-01
+
+Background-color ownership enforcement, textContent DOM metric, VRA batch optimization, and process rule hardening.
+
+### Added
+
+- **Gate 9 — mandatory `background-color` row for every named significant container** (`skills/pixel-twin.md`) — Every named container at Level 0, 1, or 2 must have a `background-color` row in the Coverage Map, sourced from `get_design_context`. CSS `background-color` does not cascade from siblings — a container that looks white via inheritance silently breaks when any ancestor changes. If Figma shows white, write `expected: "rgb(255, 255, 255)"`. Do not skip the row.
+- **Upgrade Mode sibling background audit** (`skills/pixel-twin.md`) — When any container's `background-color` row is changed or added during an upgrade, all named siblings at the same parent level must be checked for a `background-color` row. Missing rows are added before any Implementation Agent is dispatched. Closes the class of bugs where a background change on one container silently affects siblings relying on inherited white.
+- **`textContent` DOM metric** (`scripts/computed-styles.ts`) — Routes `element.textContent.trim()` via the DOM metrics path. Coverage Map rows must use `"textContent"` as the property key (not `"text-content"`) since `getComputedStyle().getPropertyValue("text-content")` always returns empty string.
+- **VRA batch rule** (`CLAUDE.md`) — All row types (CSS props, structural, visibility, textContent) for one URL state go in a single `computed-styles.ts --batch` call. Never launch separate browser instances per row type. One browser launch per URL state group.
+- **Process rules** (`CLAUDE.md`):
+  - Parent-first `get_design_context` — spacing between siblings is defined by the parent flex/grid container; always call `get_design_context` on the parent before children.
+  - `get_metadata` vs `get_design_context` distinction — `get_metadata` returns structure only; `get_design_context` returns CSS values. They are not interchangeable. If `get_design_context` fails, stop immediately.
+  - New layout mode = new Coverage Map — any conditional rendering path is a new component with its own Coverage Map.
+  - SDK type definitions check — read `.d.ts` before assuming component props exist.
+  - Inline img baseline gap fix pattern — block containers holding `display:inline` `<img>`/`<svg>` are taller than the image by the CSS strut's descender space. Fix: `display: block` on the img.
+  - Coverage Map operations are direct — running `computed-styles.ts`, editing coverage-map JSON, running `css-variables.ts` do not require user permission.
+
+---
+
 ## [0.7.0] - 2026-04-23
 
 Closes remaining systemic gaps: selector re-validation on every VRA run, JSX-first selector assignment in Upgrade/Adopt Mode, and token migration property existence rule.

@@ -23,6 +23,7 @@ You coordinate pixel-accurate UI implementation from Figma to browser. You build
 | 6 | Every `expected` value is sourced from `get_design_context` output — NEVER from code knowledge, screenshots, or "visually looks correct" reasoning | Cognitive bias: rows pass because you wrote what the code already does, not what Figma specifies |
 | 7 | `get_screenshot` called on every significant container during Step 3d-containers Phase 1; screenshot paths stored in `prerequisites.figmaScreenshots` | Visual regressions in icon shape, SVG paths, or rendering artifacts that CSS properties cannot detect go unnoticed |
 | 8 | Every proposed CSS fix MUST be accompanied by a printed Figma citation block (see format below) before any code is written | Engineer cannot verify the fix is targeting the right value; silent Gate 6 violations go undetected |
+| 9 | Every named significant container (Level 0, 1, 2) has a `background-color` row in the Coverage Map, sourced from `get_design_context` — even if the container looks white or appears to inherit correctly | Inheritance is not ownership: a sibling or ancestor background change silently breaks containers that have no explicit `background-color` in code |
 
 **Figma citation block format** (mandatory output before any CSS write):
 ```
@@ -316,6 +317,22 @@ Extract properties **outside-in: container layout first, then visual, then child
 
 Every element type has a mandatory base set — extract these regardless of whether Figma explicitly shows the value. Absent Figma values still affect rendering via browser defaults and library resets.
 
+**⛔ `background-color` is ALWAYS mandatory for every named significant container (Gate 9):**
+
+CSS `background-color` does NOT cascade from siblings — it is only inherited from direct ancestors. A container with no explicit `background-color` in code inherits from its parent. This means:
+- If the parent's background changes, all children without explicit backgrounds change silently.
+- A container that "looks white" in the browser may be relying on page-level inheritance, not an explicit setting.
+- When a sibling's background is changed, ALL other siblings at the same level must be checked.
+
+**Rule:** For every named significant container at Level 0, 1, or 2, you MUST:
+1. Call `get_design_context` on that node specifically (not just the parent).
+2. Extract its `background-color` value (even if it appears to be `white` or `transparent`).
+3. Write a Coverage Map row with `property: "background-color"`, `expected` sourced from Figma.
+
+If Figma shows `white` (e.g. `var(--surface/body, white)`), write `expected: "rgb(255, 255, 255)"`. Do NOT skip the row because "it's just white."
+
+**Inheritance is not ownership.** A container that looks correct today via inheritance will silently break when its ancestor changes.
+
 **⛔ GATE 6 enforcement — mandatory for every Coverage Map row:**
 
 Before writing any row's `expected` value, you MUST have called `get_design_context` on that node (or its nearest named ancestor). The `expected` value MUST come from the `get_design_context` response — either the CSS value in the returned code snippet, or the computed fallback from a `var(--token, fallback)` pattern.
@@ -475,6 +492,16 @@ Read `coverage-map-<frameId>.json`. For each significant container (nodes that w
 3. **Moved**: node-id in registry but has a different parent in current Figma tree
 
 To minimize Figma API calls, only call `get_design_context` on significant containers (4–6 nodes), not every leaf.
+
+**⛔ Upgrade Mode: background-color sibling audit (mandatory — Gate 9 enforcement):**
+
+When ANY container's `background-color` row is changed or added in this upgrade:
+1. Identify ALL named sibling containers at the same parent level.
+2. For each sibling, check whether the Coverage Map already has a `background-color` row.
+3. If missing: call `get_design_context` on the sibling, extract its `background-color`, and add the row.
+4. Add all new rows to the Coverage Map before dispatching any Implementation Agent.
+
+Reason: changing a container's background exposes whether siblings were relying on parent-level inheritance rather than an explicit setting. If they were, they need explicit backgrounds too — and the Coverage Map must verify this.
 
 ### 4c — Present diff and wait
 

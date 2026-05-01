@@ -80,20 +80,35 @@ From `COVERAGE_MAP_PATH` prerequisites block:
 
 ---
 
-## Step 3 — Build batch requests (two passes)
+## Step 3 — Build batch requests (one browser launch per state group)
 
-**Skip rows with `"property": "structure"` — handled separately in Step 4b.**
+**Include ALL row types in the batch — no separate browser launches for structural/visibility rows.**
+
+The `computed-styles.ts --batch` mode supports `childrenTestids`, `display`, and all other DOM metrics in the same batch alongside CSS properties. There is no reason to run structural checks in a separate `--selector` call.
+
+**Mapping Coverage Map row types to batch properties:**
+
+| Row type | `property` field | Batch property to request |
+|----------|-----------------|--------------------------|
+| CSS property | `"background-color"`, `"font-size"`, etc. | the property as-is |
+| Structure / children order | `"structure"` | `"childrenTestids"` |
+| Visibility / absence | `"visibility"` with expected `"not rendered"` | `"display"` — handle `selector_not_found` as pass for absence expectations |
+| Text content | `"text-content"` | `"textContent"` (DOM metric) |
 
 **Group A batch** (default state): rows where `state` is null or absent.
 **Group B batches** (interactive states): one batch per distinct `state` value. Each batch contains only rows with that `state` value.
 
-For each group/batch, build a batch items array grouped by selector:
+For each group/batch, build a batch items array. **Group all properties for the same selector into a single batch entry** to avoid duplicate selector entries:
 
 ```json
 [
   {
     "selector": "[data-testid='filter-sidebar']",
-    "properties": ["background-color", "padding-left", "padding-right", "padding-top", "padding-bottom"]
+    "properties": ["background-color", "padding-left", "childrenTestids"]
+  },
+  {
+    "selector": "[data-testid='roi-tabs']",
+    "properties": ["display"]
   }
 ]
 ```
@@ -183,42 +198,25 @@ If it succeeds: record `{ diffPixels, totalPixels, diffPercent, diffImagePath }`
 
 A `screenshotStatus: "fail"` counts toward `failCount` in the result file. A `"warn"` does not.
 
-### Step 4b — Structural rows
+### Step 4b — Post-process structural and visibility rows from batch results
 
-For rows with `"property": "structure"`: verify (1) that the selector exists, and (2) that children are in the expected order.
+Structural (`property: "structure"`) and visibility (`property: "visibility"`) rows are now included in the main batch (Step 3). After the batch run, apply these result-interpretation rules:
 
-**Existence check:**
+**Structure rows** (requested `childrenTestids` in batch):
+- Batch result `error` non-null → `status: "selector_not_found"`, `actual: "selector not found"`
+- Batch returns `childrenTestids` value → parse as JSON array of child identifiers
+  - If `figmaValue` encodes a children list (`"<parent>: [<child1>, ...]"`): compare parsed arrays
+    - Matches → `status: "pass"`, `actual: "childrenTestids=[...] — order matches"`
+    - Differs → `status: "fail"`, `actual: "<parent>: [<actual order>]"`
+  - If `figmaValue` is a free-form structural description: check that the selector exists and log children as `actual`
 
-```bash
-npx tsx <PIXEL_TWIN_ROOT>/scripts/computed-styles.ts \
-  --url "<prerequisites.url>" \
-  --selector "<row.selector>" \
-  --properties "display" \
-  --wait-for "<prerequisites.waitFor>" \
-  [...]
-```
+**Visibility / absence rows** (requested `display` in batch):
+- Batch result `error` non-null (selector not found) AND expected is `"not rendered"` → `status: "pass"`, `actual: "not rendered (selector absent from DOM)"`
+- Batch result `error` non-null AND expected is NOT `"not rendered"` → `status: "selector_not_found"`
+- Batch result `error` null (selector found) AND expected is `"not rendered"` → `status: "fail"`, `actual: "rendered (element present in DOM)"`
+- Batch result `error` null AND expected is a CSS value → apply normal tolerance rules on the `display` value
 
-If the selector returns an error: `status: "selector_not_found"`, `actual: "selector not found"`. Stop — do not check order.
-
-**Order check** (only when `figmaValue` encodes a children list as `"<parent>: [<child1>, <child2>, ...]"`):
-
-Run a second single-mode query requesting the `childrenTestids` DOM metric:
-
-```bash
-npx tsx <PIXEL_TWIN_ROOT>/scripts/computed-styles.ts \
-  --url "<prerequisites.url>" \
-  --selector "<row.selector>" \
-  --properties "childrenTestids" \
-  --wait-for "<prerequisites.waitFor>" \
-  [...]
-```
-
-`childrenTestids` returns a JSON-stringified array of the element's direct children's `data-testid` values in DOM order (elements without a `data-testid` appear as their tag name + position, e.g. `"div:3"`).
-
-Parse the expected children list from `figmaValue`. Compare against the actual `childrenTestids` array:
-- Order matches → `status: "pass"`, `actual: "selector exists, children order matches"`
-- Order differs → `status: "fail"`, `actual: "<parent>: [<actual children in DOM order>]"`
-- `childrenTestids` query fails (script error) → log warning, fall back to existence-only check, `actual: "selector exists (order unverifiable)"`
+**⚡ Performance note:** This batching eliminates N separate browser launches (one per structural/visibility check). All rows for a given state group are measured in a single Playwright session.
 
 ---
 

@@ -34,6 +34,8 @@ const DOM_METRIC_PROPS = new Set([
   // "not-an-img" if the element is not an <img>, or "canvas-unavailable" if 2D context failed.
   // Used to verify icon/image asset colors when CSS getComputedStyle cannot measure them.
   "imagePixelColor",
+  // Returns element.textContent trimmed. Used for text-content rows in Coverage Maps.
+  "textContent",
 ])
 
 import { chromium, type Page } from "@playwright/test"
@@ -192,7 +194,7 @@ async function main() {
             results.push({ selector: item.selector, properties: {}, error: `Selector not found: ${item.selector}` })
             continue
           }
-          const DOM_METRICS = ["scrollWidth","clientWidth","scrollHeight","clientHeight","offsetWidth","offsetHeight","offsetTop","offsetLeft","boundingWidth","boundingHeight","boundingTop","boundingLeft","boundingRight","boundingBottom","isOverflowingX","isOverflowingY","childrenTestids","imagePixelColor"]
+          const DOM_METRICS = ["scrollWidth","clientWidth","scrollHeight","clientHeight","offsetWidth","offsetHeight","offsetTop","offsetLeft","boundingWidth","boundingHeight","boundingTop","boundingLeft","boundingRight","boundingBottom","isOverflowingX","isOverflowingY","childrenTestids","imagePixelColor","textContent"]
           const props = await el.evaluate(
             (node, [properties, domMetrics]) => {
               const computed = window.getComputedStyle(node)
@@ -240,6 +242,7 @@ async function main() {
                       }
                     }
                   }
+                  else if (p === "textContent") result[p] = node.textContent?.trim() ?? ""
                   else result[p] = String((node as unknown as Record<string,number>)[p] ?? "")
                 } else {
                   result[p] = computed.getPropertyValue(p).trim()
@@ -317,6 +320,7 @@ async function main() {
                       }
                     }
                   }
+                  else if (p === "textContent") result[p] = el.textContent?.trim() ?? ""
                   else result[p] = String((el as unknown as Record<string,number>)[p] ?? "")
                 } else {
                   result[p] = computed.getPropertyValue(p).trim()

@@ -3,3 +3,9 @@ node_modules/
 dist/
 tmp/
 *.png
+
+# Project-specific one-off scripts (debug/measure/verify scripts scoped to a single run)
+scripts/debug-*.ts
+scripts/measure-*.ts
+scripts/check-*.ts
+scripts/verify-*.ts
